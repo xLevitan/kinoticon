@@ -1,8 +1,28 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { checkWordHash, checkWinConditionByHashes, decryptMovieInfo } from '../../shared/utils/wordCloud';
+import { preloadTwemoji } from '../utils/twemoji';
+
+// Get testDay from localStorage for testing different days
+function getStoredTestDay(): number | undefined {
+  const stored = localStorage.getItem('kinoticon-testDay');
+  return stored ? parseInt(stored, 10) : undefined;
+}
+
+/** User's local date YYYY-MM-DD (Wordle-style: new puzzle at midnight in user's timezone). */
+function getLocalDateString(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
 
 interface GameState {
   emojis: string[];
   wordCloud: string[];
+  titleHashes: string[];
+  salt: string;
+  encryptedMovie: string;
   triesLeft: number;
   gameOver: boolean;
   won: boolean;
@@ -28,6 +48,9 @@ export function useGame() {
   const [state, setState] = useState<GameState>({
     emojis: [],
     wordCloud: [],
+    titleHashes: [],
+    salt: '',
+    encryptedMovie: '',
     triesLeft: 6,
     gameOver: false,
     won: false,
@@ -38,6 +61,11 @@ export function useGame() {
     loading: true,
   });
   
+  // Track if we need to sync with server
+  const syncPending = useRef(false);
+  /** When opening a specific post, server tells us postId so we load that post’s day (not “today”). */
+  const postIdRef = useRef<string | null>(null);
+  
   const [stats, setStats] = useState<Stats>({
     gamesPlayed: 0,
     gamesWon: 0,
@@ -47,49 +75,85 @@ export function useGame() {
   });
   
   const [filter, setFilter] = useState('');
+  
+  // Get testDay from localStorage (for testing different days)
+  const [testDay, setTestDayState] = useState<number | undefined>(() => getStoredTestDay());
+  /** Only true on dev subreddit (e.g. kinoticon_dev); release build hides dev menu. */
+  const [isDevSubreddit, setIsDevSubreddit] = useState(false);
 
-  // Load game on mount
-  useEffect(() => {
-    loadGame();
+  const loadStats = useCallback(async () => {
+    try {
+      const response = await fetch('/api/game/stats');
+      const data = await response.json();
+      
+      if (data.status !== 'error') {
+        setStats({
+          gamesPlayed: data.gamesPlayed || 0,
+          gamesWon: data.gamesWon || 0,
+          currentStreak: data.currentStreak || 0,
+          maxStreak: data.maxStreak || 0,
+          winRate: data.gamesPlayed > 0 
+            ? Math.round((data.gamesWon / data.gamesPlayed) * 100) 
+            : 0,
+        });
+      }
+    } catch (error) {
+      console.error('Failed to load stats:', error);
+    }
   }, []);
 
   const loadGame = useCallback(async () => {
     try {
       setState(prev => ({ ...prev, loading: true, error: undefined }));
-      
-      const response = await fetch('/api/game/daily');
+
+      const ctxRes = await fetch('/api/context');
+      const ctx = (await ctxRes.json()) as { postId?: string; isDevSubreddit?: boolean };
+      postIdRef.current = ctx.postId ?? null;
+      const isDev = ctx.isDevSubreddit ?? false;
+      setIsDevSubreddit(isDev);
+
+      const params = postIdRef.current
+        ? `postId=${encodeURIComponent(postIdRef.current)}`
+        : isDev && testDay
+          ? `testDay=${testDay}`
+          : `date=${getLocalDateString()}`;
+      const response = await fetch(`/api/game/daily?${params}`);
       const data = await response.json();
       
       if (data.status === 'error') {
         throw new Error(data.message);
       }
+
+      // Wait for game emoji to load so they display instantly when screen appears
+      await preloadTwemoji(data.emojis || []);
+
+      // Decrypt movie info if game is already over
+      const movieInfo = data.gameOver && data.encryptedMovie
+        ? decryptMovieInfo(data.encryptedMovie, data.salt)
+        : null;
       
-      // Separate selected words into correct and wrong
-      const correctWords: string[] = [];
-      const wrongWords: string[] = [];
-      
-      if (data.selectedWords) {
-        // We'll need to re-check which words are correct
-        // For now, assume all selected words that led to a win were correct
-        // This will be updated when we make guesses
-      }
-      
+      const loadedSelected = data.selectedWords || [];
+      const loadedCorrect = data.correctWords || [];
+      const loadedWrong = loadedSelected.filter((w: string) => !loadedCorrect.includes(w));
+
       setState({
         emojis: data.emojis || [],
         wordCloud: data.wordCloud || [],
+        titleHashes: data.titleHashes || [],
+        salt: data.salt || '',
+        encryptedMovie: data.encryptedMovie || '',
         triesLeft: data.triesLeft ?? 6,
         gameOver: data.gameOver ?? false,
         won: data.won ?? false,
-        selectedWords: data.selectedWords || [],
-        correctWords,
-        wrongWords,
+        selectedWords: loadedSelected,
+        correctWords: loadedCorrect,
+        wrongWords: loadedWrong,
         dayNumber: data.dayNumber || 0,
-        movieTitle: data.movieTitle,
-        movieYear: data.movieYear,
+        movieTitle: movieInfo?.title,
+        movieYear: movieInfo?.year,
         loading: false,
       });
       
-      // Load stats
       loadStats();
     } catch (error) {
       console.error('Failed to load game:', error);
@@ -99,73 +163,95 @@ export function useGame() {
         error: error instanceof Error ? error.message : 'Failed to load game',
       }));
     }
-  }, []);
+  }, [testDay, loadStats]);
 
-  const loadStats = useCallback(async () => {
-    try {
-      const response = await fetch('/api/game/stats');
-      const data = await response.json();
-      
-      if (data.status !== 'error') {
-        setStats(data);
-      }
-    } catch (error) {
-      console.error('Failed to load stats:', error);
-    }
-  }, []);
+  // Load game on mount
+  useEffect(() => {
+    loadGame();
+  }, [loadGame]);
 
-  const makeGuess = useCallback(async (word: string) => {
-    if (state.gameOver || state.loading) return;
-    
-    // Check if already selected
-    const wordLower = word.toLowerCase();
-    if (state.selectedWords.includes(wordLower)) return;
-    
+  // Sync state to server (fire and forget)
+  const syncToServer = useCallback(async (newState: {
+    selectedWords: string[];
+    correctWords: string[];
+    triesLeft: number;
+    gameOver: boolean;
+    won: boolean;
+  }) => {
     try {
-      setState(prev => ({ ...prev, loading: true }));
-      
-      const response = await fetch('/api/game/guess', {
+      await fetch('/api/game/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ word: wordLower }),
+        body: JSON.stringify({
+          ...newState,
+          ...(postIdRef.current
+            ? { postId: postIdRef.current }
+            : isDevSubreddit && testDay
+              ? { testDay }
+              : { date: getLocalDateString() }),
+        }),
       });
       
-      const data = await response.json();
-      
-      if (data.status === 'error') {
-        throw new Error(data.message);
-      }
-      
-      setState(prev => ({
-        ...prev,
-        triesLeft: data.triesLeft,
-        gameOver: data.gameOver,
-        won: data.won,
-        selectedWords: [...prev.selectedWords, wordLower],
-        correctWords: data.correct 
-          ? [...prev.correctWords, wordLower]
-          : prev.correctWords,
-        wrongWords: !data.correct 
-          ? [...prev.wrongWords, wordLower]
-          : prev.wrongWords,
-        movieTitle: data.movieTitle,
-        movieYear: data.movieYear,
-        loading: false,
-      }));
-      
-      // Reload stats if game ended
-      if (data.gameOver) {
+      // Refresh stats if game ended
+      if (newState.gameOver) {
         loadStats();
       }
     } catch (error) {
-      console.error('Failed to make guess:', error);
-      setState(prev => ({
-        ...prev,
-        loading: false,
-        error: error instanceof Error ? error.message : 'Failed to make guess',
-      }));
+      console.error('Failed to sync:', error);
     }
-  }, [state.gameOver, state.loading, state.selectedWords, loadStats]);
+  }, [testDay, isDevSubreddit, loadStats]);
+
+  const makeGuess = useCallback((word: string) => {
+    if (state.gameOver) return;
+    
+    const wordLower = word.toLowerCase();
+    if (state.selectedWords.includes(wordLower)) return;
+    
+    // Check locally using hash
+    const isCorrect = checkWordHash(wordLower, state.titleHashes, state.salt);
+    
+    // Calculate new state
+    const newSelectedWords = [...state.selectedWords, wordLower];
+    const newCorrectWords = isCorrect 
+      ? [...state.correctWords, wordLower] 
+      : state.correctWords;
+    const newWrongWords = !isCorrect 
+      ? [...state.wrongWords, wordLower] 
+      : state.wrongWords;
+    const newTriesLeft = isCorrect ? state.triesLeft : state.triesLeft - 1;
+    
+    // Check win/lose
+    const won = isCorrect && checkWinConditionByHashes(newSelectedWords, state.titleHashes, state.salt);
+    const lost = newTriesLeft <= 0;
+    const gameOver = won || lost;
+    
+    // Decrypt movie info immediately if game is over
+    const movieInfo = gameOver && state.encryptedMovie
+      ? decryptMovieInfo(state.encryptedMovie, state.salt)
+      : null;
+    
+    // Update state immediately
+    setState(prev => ({
+      ...prev,
+      selectedWords: newSelectedWords,
+      correctWords: newCorrectWords,
+      wrongWords: newWrongWords,
+      triesLeft: newTriesLeft,
+      won,
+      gameOver,
+      movieTitle: movieInfo?.title ?? prev.movieTitle,
+      movieYear: movieInfo?.year ?? prev.movieYear,
+    }));
+    
+    // Sync to server in background
+    syncToServer({
+      selectedWords: newSelectedWords,
+      correctWords: newCorrectWords,
+      triesLeft: newTriesLeft,
+      gameOver,
+      won,
+    });
+  }, [state.gameOver, state.selectedWords, state.correctWords, state.wrongWords, state.triesLeft, state.titleHashes, state.salt, state.encryptedMovie, syncToServer]);
 
   // Get visible emojis based on tries left
   const visibleEmojis = state.emojis.map((emoji, index) => ({
@@ -180,16 +266,40 @@ export function useGame() {
 
   // Generate share text
   const getShareText = useCallback(() => {
-    const squares = state.emojis.map((_, index) => {
-      if (index < state.triesLeft) return '🟩';
-      return '⬛';
+    const circles = state.emojis.map((_, index) => {
+      if (index < state.triesLeft) return '🟢';
+      return '🔴';
     }).join('');
     
     const result = state.won ? '🎬' : '💀';
     const tries = state.won ? `${6 - state.triesLeft + 1}/6` : 'X/6';
     
-    return `Kinoticon Day ${state.dayNumber} ${result}\n${tries}\n${squares}\n\nPlay at reddit.com/r/kinoticon`;
+    return `Kinoticon Day ${state.dayNumber} ${result}\n${tries}\n${circles}\n\nPlay at reddit.com/r/kinoticon`;
   }, [state.emojis, state.triesLeft, state.won, state.dayNumber]);
+
+  const resetDayResult = useCallback(async (): Promise<string | null> => {
+    try {
+      const body = postIdRef.current
+        ? { postId: postIdRef.current }
+        : isDevSubreddit && testDay
+          ? { testDay }
+          : { date: getLocalDateString() };
+      const res = await fetch('/api/dev/reset-day-result', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (data.status === 'success') {
+        await loadGame();
+        return data.message ?? null;
+      }
+      return data.message ?? data.status ?? 'Failed';
+    } catch (e) {
+      console.error('Reset day result:', e);
+      return 'Request failed';
+    }
+  }, [isDevSubreddit, testDay, loadGame]);
 
   return {
     // State
@@ -216,5 +326,19 @@ export function useGame() {
     makeGuess,
     getShareText,
     reload: loadGame,
+    loadStats,
+
+    // Dev mode (only used when isDevSubreddit)
+    isDevSubreddit,
+    testDay,
+    resetDayResult,
+    setTestDay: (day: number | undefined) => {
+      if (day) {
+        localStorage.setItem('kinoticon-testDay', day.toString());
+      } else {
+        localStorage.removeItem('kinoticon-testDay');
+      }
+      setTestDayState(day);
+    },
   };
 }

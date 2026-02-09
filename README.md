@@ -26,6 +26,13 @@ A starter to build web applications on Reddit's developer platform
 - `npm run login`: Logs your CLI into Reddit
 - `npm run check`: Type checks, lints, and prettifies your app
 
+## Emoji (Twemoji)
+
+Emoji are rendered with [Twemoji](https://github.com/jdecked/twemoji) for a consistent look everywhere (including Reddit webview). Assets are self-hosted in `src/client/public/emoji/`.
+
+- **First time / after adding movies:** run `npm run download-twemoji` to fetch PNGs for all emoji used in `movies.ts`. This is also run automatically before `npm run build`.
+- **Attribution:** Twemoji graphics © Twitter, licensed under [CC-BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+
 ## Cursor Integration
 
 This template comes with a pre-configured cursor environment. To get started, [download cursor](https://www.cursor.com/downloads) and enable the `devvit-mcp` when prompted.

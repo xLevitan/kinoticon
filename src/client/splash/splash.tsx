@@ -1,5 +1,5 @@
 import '../index.css';
-
+import { getTwemojiUrl } from '../utils/twemoji';
 import { navigateTo } from '@devvit/web/client';
 import { context, requestExpandedMode } from '@devvit/web/client';
 import { StrictMode } from 'react';
@@ -10,8 +10,9 @@ export const Splash = () => {
     <div className="flex relative flex-col justify-center items-center min-h-screen gap-4">
       <img className="object-contain w-1/2 max-w-[250px] mx-auto" src="/snoo.png" alt="Snoo" />
       <div className="flex flex-col items-center gap-2">
-        <h1 className="text-2xl font-bold text-center text-gray-900 ">
-          Hey {context.username ?? 'user'} 👋
+        <h1 className="text-2xl font-bold text-center text-gray-900 flex items-center justify-center gap-1.5">
+          Hey {context.username ?? 'user'}{' '}
+          <img src={getTwemojiUrl('👋')} alt="" className="inline-block w-7 h-7 object-contain align-middle" draggable={false} />
         </h1>
         <p className="text-base text-center text-gray-600 ">
           Edit{' '}

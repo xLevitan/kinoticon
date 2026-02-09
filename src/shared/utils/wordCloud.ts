@@ -44,9 +44,9 @@ export function generateWordCloud(movie: Movie, seed: number = 0): string[] {
   // Add all words from the target movie title
   titleWords.forEach(word => wordSet.add(word));
   
-  // Add some words from other random movies as decoys
+  // Add some words from other random movies as decoys (fewer = less scroll on desktop)
   const usedDecoyWords = new Set<string>();
-  const numDecoys = Math.min(15, movieDatabase.length);
+  const numDecoys = Math.min(11, movieDatabase.length);
   
   for (let i = 0; i < numDecoys; i++) {
     const randomIndex = (seed + i * 7) % movieDatabase.length;
@@ -67,7 +67,7 @@ export function generateWordCloud(movie: Movie, seed: number = 0): string[] {
   usedDecoyWords.forEach(word => wordSet.add(word));
   
   // Add some base words as additional decoys
-  const numBaseWords = 10;
+  const numBaseWords = 7;
   for (let i = 0; i < numBaseWords; i++) {
     const randomIndex = (seed + i * 13) % BASE_WORD_LIST.length;
     const baseWord = BASE_WORD_LIST[randomIndex];
@@ -124,4 +124,82 @@ export function checkWinCondition(selectedWords: string[], movie: Movie): boolea
   // Win if at least 70% of important words are matched
   const winThreshold = Math.ceil(titleWords.length * 0.7);
   return matchedCount >= winThreshold;
+}
+
+// Simple hash function for client-side word verification
+// Using a basic hash to avoid exposing the actual title words
+export function hashWord(word: string, salt: string): string {
+  const str = word.toLowerCase() + salt;
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; // Convert to 32bit integer
+  }
+  return hash.toString(36);
+}
+
+// Generate hashes for all valid title words
+export function generateTitleHashes(movie: Movie, salt: string): string[] {
+  const titleWords = extractWordsFromTitle(movie.title);
+  return titleWords.map(word => hashWord(word, salt));
+}
+
+// Check if a word matches any of the title hashes
+export function checkWordHash(word: string, hashes: string[], salt: string): boolean {
+  const wordHash = hashWord(word.toLowerCase(), salt);
+  return hashes.includes(wordHash);
+}
+
+// Calculate win condition based on matched hashes
+export function checkWinConditionByHashes(
+  selectedWords: string[], 
+  titleHashes: string[], 
+  salt: string
+): boolean {
+  if (titleHashes.length === 0) return false;
+  
+  let matchedCount = 0;
+  const matchedHashes = new Set<string>();
+  
+  for (const word of selectedWords) {
+    const wordHash = hashWord(word.toLowerCase(), salt);
+    if (titleHashes.includes(wordHash) && !matchedHashes.has(wordHash)) {
+      matchedHashes.add(wordHash);
+      matchedCount++;
+    }
+  }
+  
+  const winThreshold = Math.ceil(titleHashes.length * 0.7);
+  return matchedCount >= winThreshold;
+}
+
+// Simple XOR encryption for movie info (obfuscation, not security)
+// Uses hex encoding to handle Unicode characters safely
+export function encryptMovieInfo(title: string, year: number, salt: string): string {
+  const data = JSON.stringify({ t: title, y: year });
+  const key = salt + 'kinoticon';
+  const bytes: number[] = [];
+  for (let i = 0; i < data.length; i++) {
+    bytes.push(data.charCodeAt(i) ^ key.charCodeAt(i % key.length));
+  }
+  return bytes.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+export function decryptMovieInfo(encrypted: string, salt: string): { title: string; year: number } | null {
+  try {
+    const key = salt + 'kinoticon';
+    const bytes: number[] = [];
+    for (let i = 0; i < encrypted.length; i += 2) {
+      bytes.push(parseInt(encrypted.substring(i, i + 2), 16));
+    }
+    let result = '';
+    for (let i = 0; i < bytes.length; i++) {
+      result += String.fromCharCode(bytes[i] ^ key.charCodeAt(i % key.length));
+    }
+    const parsed = JSON.parse(result);
+    return { title: parsed.t, year: parsed.y };
+  } catch {
+    return null;
+  }
 }

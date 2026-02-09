@@ -34,8 +34,7 @@ export interface DailyGameResponse {
   selectedWords: string[];
   dayNumber: number;
   alreadyPlayed: boolean;
-  movieTitle?: string; // Only revealed when game is over
-  movieYear?: number;
+  encryptedMovie?: string; // Encrypted movie info for instant reveal
 }
 
 export interface GuessResponse {
@@ -54,3 +53,19 @@ export interface StatsResponse {
   maxStreak: number;
   winRate: number;
 }
+
+export type LeaderboardEntry = {
+  rank: number;
+  userId: string;
+  gamesPlayed: number;
+  gamesWon: number;
+  winRate: number;
+  currentStreak: number;
+  maxStreak: number;
+};
+
+export type LeaderboardResponse = {
+  top100: LeaderboardEntry[];
+  aroundMe: LeaderboardEntry[];
+  myRank: number | null;
+};

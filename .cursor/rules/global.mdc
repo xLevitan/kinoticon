@@ -16,3 +16,4 @@ Rules:
 
 - Assume that typescript, vite, tailwind, eslint, prettier, and all codebase configuration is working. If there is a bug, it is more likely your code than the codebase configuration.
 - Prefer type aliases over interfaces when writing typescript
+- **Always ask what to implement before implementing.** By default, only answer questions in text; do not change code or propose features unless the user explicitly asks to build something (e.g. "add", "implement", "make", "fix", "revert"). For questions like "how do I do X?" — answer in text only, no code edits and no suggestions to implement. When the user does ask to implement, propose options or clarify the approach, then implement only after they choose. Do not pick a solution and write code without the user's explicit choice.

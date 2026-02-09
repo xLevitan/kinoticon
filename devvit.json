@@ -6,9 +6,10 @@
     "entrypoints": {
       "default": {
         "inline": true,
-        "entry": "splash.html"
+        "entry": "game.html"
       },
       "game": {
+        "inline": false,
         "entry": "game.html"
       }
     }
@@ -28,11 +29,30 @@
         "location": "subreddit",
         "forUserType": "moderator",
         "endpoint": "/internal/menu/post-create"
+      },
+      {
+        "label": "Reset 7-day test",
+        "description": "Clear counter so scheduler creates Day 1..7 again (dev sub)",
+        "location": "subreddit",
+        "forUserType": "moderator",
+        "endpoint": "/internal/menu/reset-7-day-test"
       }
     ]
   },
   "triggers": {
     "onAppInstall": "/internal/on-app-install"
+  },
+  "scheduler": {
+    "tasks": {
+      "daily-post": {
+        "endpoint": "/internal/scheduler/daily-post",
+        "cron": "0 0 * * *"
+      },
+      "daily-post-test": {
+        "endpoint": "/internal/scheduler/daily-post-test",
+        "cron": "* * * * *"
+      }
+    }
   },
   "dev": {
     "subreddit": "kinoticon_dev"
