@@ -14,18 +14,23 @@ function twemojiIcon(icon: string): string {
 }
 
 /**
- * Returns same-origin URL for Twemoji image (assets in public/emoji/). Works everywhere, including Reddit webview.
+ * Returns URL for Twemoji image (assets in public/emoji/). Resolved relative to current document
+ * so it works in Reddit webview where absolute paths like /emoji/ may point at the wrong origin.
  * Graphics © Twitter, licensed under CC-BY 4.0.
  */
 export function getTwemojiUrl(emoji: string): string {
   const icon = toCodePoint(emoji.trim());
   if (!icon) return '';
-  return `/emoji/${twemojiIcon(icon)}.png`;
+  const path = `emoji/${twemojiIcon(icon)}.png`;
+  if (typeof document !== 'undefined' && document.baseURI) {
+    return new URL(path, document.baseURI).href;
+  }
+  return `/${path}`;
 }
 
 /** Preload Twemoji images; resolves when all are loaded (or after timeout). Game screen should await this so emoji show instantly. */
 export function preloadTwemoji(emoji: string[]): Promise<void> {
-  const urls = emoji.map(getTwemojiUrl).filter(Boolean);
+  const urls = emoji.map(getTwemojiUrl).filter((u): u is string => Boolean(u));
   if (urls.length === 0) return Promise.resolve();
   return Promise.race([
     Promise.all(
@@ -40,7 +45,7 @@ export function preloadTwemoji(emoji: string[]): Promise<void> {
       )
     ),
     new Promise<void>((resolve) => setTimeout(resolve, 3000)),
-  ]);
+  ]).then(() => undefined);
 }
 
 /** UI emoji used in splash/buttons — preload on app mount. */

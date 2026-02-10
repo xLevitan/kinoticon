@@ -1,18 +1,45 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { getAssetUrl } from '../utils/assetUrl';
 
-// SND01 "sine" pack from snd.dev - local WAV files
-const SOUND_URLS = {
-  tap: ['/tap_01.wav', '/tap_02.wav', '/tap_03.wav', '/tap_04.wav', '/tap_05.wav'],
-  type: ['/type_01.wav', '/type_02.wav', '/type_03.wav', '/type_04.wav', '/type_05.wav'],
-  select: '/select.wav',
-  caution: '/caution.wav',
-  celebration: '/celebration.wav',
-  button: '/button.wav',
-  transition_up: '/transition_up.wav',
-  transition_down: '/transition_down.wav',
-  toggle_on: '/toggle_on.wav',
-  toggle_off: '/toggle_off.wav',
+// SND01 "sine" pack from snd.dev - local WAV files (paths resolved via getAssetUrl for webview)
+const SOUND_PATHS = {
+  tap: ['tap_01.wav', 'tap_02.wav', 'tap_03.wav', 'tap_04.wav', 'tap_05.wav'],
+  type: ['type_01.wav', 'type_02.wav', 'type_03.wav', 'type_04.wav', 'type_05.wav'],
+  select: 'select.wav',
+  caution: 'caution.wav',
+  celebration: 'celebration.wav',
+  button: 'button.wav',
+  transition_up: 'transition_up.wav',
+  transition_down: 'transition_down.wav',
+  toggle_on: 'toggle_on.wav',
+  toggle_off: 'toggle_off.wav',
 } as const;
+
+function resolveSoundUrls(): {
+  tap: readonly string[];
+  type: readonly string[];
+  select: string;
+  caution: string;
+  celebration: string;
+  button: string;
+  transition_up: string;
+  transition_down: string;
+  toggle_on: string;
+  toggle_off: string;
+} {
+  return {
+    tap: SOUND_PATHS.tap.map((p) => getAssetUrl(p)),
+    type: SOUND_PATHS.type.map((p) => getAssetUrl(p)),
+    select: getAssetUrl(SOUND_PATHS.select),
+    caution: getAssetUrl(SOUND_PATHS.caution),
+    celebration: getAssetUrl(SOUND_PATHS.celebration),
+    button: getAssetUrl(SOUND_PATHS.button),
+    transition_up: getAssetUrl(SOUND_PATHS.transition_up),
+    transition_down: getAssetUrl(SOUND_PATHS.transition_down),
+    toggle_on: getAssetUrl(SOUND_PATHS.toggle_on),
+    toggle_off: getAssetUrl(SOUND_PATHS.toggle_off),
+  };
+}
 
 export function useSound() {
   const [enabled, setEnabled] = useState(() => {
@@ -20,6 +47,7 @@ export function useSound() {
     return stored !== 'false';
   });
 
+  const SOUND_URLS = useMemo(() => resolveSoundUrls(), []);
   const audioRefs = useRef<Record<string, HTMLAudioElement>>({});
   const themeToggleStateRef = useRef<'on' | 'off'>('off');
 
@@ -48,13 +76,14 @@ export function useSound() {
       audioRefs.current[url] = audio;
     });
 
+    const refsToClean = audioRefs.current;
     return () => {
-      Object.values(audioRefs.current).forEach((a) => {
+      Object.values(refsToClean).forEach((a) => {
         a.pause();
         a.src = '';
       });
     };
-  }, []);
+  }, [SOUND_URLS]);
 
   useEffect(() => {
     localStorage.setItem('soundEnabled', String(enabled));
@@ -68,7 +97,9 @@ export function useSound() {
       try {
         audio.currentTime = 0;
         audio.play().catch(() => {});
-      } catch {}
+      } catch {
+        // Ignore play errors
+      }
     },
     [enabled]
   );
@@ -76,13 +107,14 @@ export function useSound() {
   const playTap = useCallback(() => {
     const urls = SOUND_URLS.tap;
     const url = urls[Math.floor(Math.random() * urls.length)];
-    play(url);
+    if (url) play(url);
   }, [play]);
 
   const playType = useCallback(() => {
     if (!enabled) return;
     const urls = SOUND_URLS.type;
     const url = urls[Math.floor(Math.random() * urls.length)];
+    if (!url) return;
     try {
       // Create new Audio element for each keystroke to allow overlapping sounds
       const audio = new Audio(url);

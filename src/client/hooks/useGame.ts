@@ -1,5 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { checkWordHash, checkWinConditionByHashes, decryptMovieInfo } from '../../shared/utils/wordCloud';
+import {
+  checkWordHash,
+  checkWinConditionByHashes,
+  decryptMovieInfo,
+} from '../../shared/utils/wordCloud';
 import { preloadTwemoji } from '../utils/twemoji';
 
 // Get testDay from localStorage for testing different days
@@ -60,12 +64,10 @@ export function useGame() {
     dayNumber: 0,
     loading: true,
   });
-  
-  // Track if we need to sync with server
-  const syncPending = useRef(false);
+
   /** When opening a specific post, server tells us postId so we load that post’s day (not “today”). */
   const postIdRef = useRef<string | null>(null);
-  
+
   const [stats, setStats] = useState<Stats>({
     gamesPlayed: 0,
     gamesWon: 0,
@@ -73,9 +75,9 @@ export function useGame() {
     maxStreak: 0,
     winRate: 0,
   });
-  
+
   const [filter, setFilter] = useState('');
-  
+
   // Get testDay from localStorage (for testing different days)
   const [testDay, setTestDayState] = useState<number | undefined>(() => getStoredTestDay());
   /** Only true on dev subreddit (e.g. kinoticon_dev); release build hides dev menu. */
@@ -85,16 +87,14 @@ export function useGame() {
     try {
       const response = await fetch('/api/game/stats');
       const data = await response.json();
-      
+
       if (data.status !== 'error') {
         setStats({
           gamesPlayed: data.gamesPlayed || 0,
           gamesWon: data.gamesWon || 0,
           currentStreak: data.currentStreak || 0,
           maxStreak: data.maxStreak || 0,
-          winRate: data.gamesPlayed > 0 
-            ? Math.round((data.gamesWon / data.gamesPlayed) * 100) 
-            : 0,
+          winRate: data.gamesPlayed > 0 ? Math.round((data.gamesWon / data.gamesPlayed) * 100) : 0,
         });
       }
     } catch (error) {
@@ -104,7 +104,7 @@ export function useGame() {
 
   const loadGame = useCallback(async () => {
     try {
-      setState(prev => ({ ...prev, loading: true, error: undefined }));
+      setState((prev) => ({ ...prev, loading: true }));
 
       const ctxRes = await fetch('/api/context');
       const ctx = (await ctxRes.json()) as { postId?: string; isDevSubreddit?: boolean };
@@ -119,7 +119,7 @@ export function useGame() {
           : `date=${getLocalDateString()}`;
       const response = await fetch(`/api/game/daily?${params}`);
       const data = await response.json();
-      
+
       if (data.status === 'error') {
         throw new Error(data.message);
       }
@@ -128,10 +128,11 @@ export function useGame() {
       await preloadTwemoji(data.emojis || []);
 
       // Decrypt movie info if game is already over
-      const movieInfo = data.gameOver && data.encryptedMovie
-        ? decryptMovieInfo(data.encryptedMovie, data.salt)
-        : null;
-      
+      const movieInfo =
+        data.gameOver && data.encryptedMovie
+          ? decryptMovieInfo(data.encryptedMovie, data.salt)
+          : null;
+
       const loadedSelected = data.selectedWords || [];
       const loadedCorrect = data.correctWords || [];
       const loadedWrong = loadedSelected.filter((w: string) => !loadedCorrect.includes(w));
@@ -149,15 +150,14 @@ export function useGame() {
         correctWords: loadedCorrect,
         wrongWords: loadedWrong,
         dayNumber: data.dayNumber || 0,
-        movieTitle: movieInfo?.title,
-        movieYear: movieInfo?.year,
+        ...(movieInfo ? { movieTitle: movieInfo.title, movieYear: movieInfo.year } : {}),
         loading: false,
       });
-      
-      loadStats();
+
+      void loadStats();
     } catch (error) {
       console.error('Failed to load game:', error);
-      setState(prev => ({
+      setState((prev) => ({
         ...prev,
         loading: false,
         error: error instanceof Error ? error.message : 'Failed to load game',
@@ -167,113 +167,128 @@ export function useGame() {
 
   // Load game on mount
   useEffect(() => {
-    loadGame();
+    void loadGame();
   }, [loadGame]);
 
   // Sync state to server (fire and forget)
-  const syncToServer = useCallback(async (newState: {
-    selectedWords: string[];
-    correctWords: string[];
-    triesLeft: number;
-    gameOver: boolean;
-    won: boolean;
-  }) => {
-    try {
-      await fetch('/api/game/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...newState,
-          ...(postIdRef.current
-            ? { postId: postIdRef.current }
-            : isDevSubreddit && testDay
-              ? { testDay }
-              : { date: getLocalDateString() }),
-        }),
-      });
-      
-      // Refresh stats if game ended
-      if (newState.gameOver) {
-        loadStats();
-      }
-    } catch (error) {
-      console.error('Failed to sync:', error);
-    }
-  }, [testDay, isDevSubreddit, loadStats]);
+  const syncToServer = useCallback(
+    async (newState: {
+      selectedWords: string[];
+      correctWords: string[];
+      triesLeft: number;
+      gameOver: boolean;
+      won: boolean;
+    }) => {
+      try {
+        await fetch('/api/game/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...newState,
+            ...(postIdRef.current
+              ? { postId: postIdRef.current }
+              : isDevSubreddit && testDay
+                ? { testDay }
+                : { date: getLocalDateString() }),
+          }),
+        });
 
-  const makeGuess = useCallback((word: string) => {
-    if (state.gameOver) return;
-    
-    const wordLower = word.toLowerCase();
-    if (state.selectedWords.includes(wordLower)) return;
-    
-    // Check locally using hash
-    const isCorrect = checkWordHash(wordLower, state.titleHashes, state.salt);
-    
-    // Calculate new state
-    const newSelectedWords = [...state.selectedWords, wordLower];
-    const newCorrectWords = isCorrect 
-      ? [...state.correctWords, wordLower] 
-      : state.correctWords;
-    const newWrongWords = !isCorrect 
-      ? [...state.wrongWords, wordLower] 
-      : state.wrongWords;
-    const newTriesLeft = isCorrect ? state.triesLeft : state.triesLeft - 1;
-    
-    // Check win/lose
-    const won = isCorrect && checkWinConditionByHashes(newSelectedWords, state.titleHashes, state.salt);
-    const lost = newTriesLeft <= 0;
-    const gameOver = won || lost;
-    
-    // Decrypt movie info immediately if game is over
-    const movieInfo = gameOver && state.encryptedMovie
-      ? decryptMovieInfo(state.encryptedMovie, state.salt)
-      : null;
-    
-    // Update state immediately
-    setState(prev => ({
-      ...prev,
-      selectedWords: newSelectedWords,
-      correctWords: newCorrectWords,
-      wrongWords: newWrongWords,
-      triesLeft: newTriesLeft,
-      won,
-      gameOver,
-      movieTitle: movieInfo?.title ?? prev.movieTitle,
-      movieYear: movieInfo?.year ?? prev.movieYear,
-    }));
-    
-    // Sync to server in background
-    syncToServer({
-      selectedWords: newSelectedWords,
-      correctWords: newCorrectWords,
-      triesLeft: newTriesLeft,
-      gameOver,
-      won,
-    });
-  }, [state.gameOver, state.selectedWords, state.correctWords, state.wrongWords, state.triesLeft, state.titleHashes, state.salt, state.encryptedMovie, syncToServer]);
+        // Refresh stats if game ended
+        if (newState.gameOver) {
+          void loadStats();
+        }
+      } catch (error) {
+        console.error('Failed to sync:', error);
+      }
+    },
+    [testDay, isDevSubreddit, loadStats]
+  );
+
+  const makeGuess = useCallback(
+    (word: string) => {
+      if (state.gameOver) return;
+
+      const wordLower = word.toLowerCase();
+      if (state.selectedWords.includes(wordLower)) return;
+
+      // Check locally using hash
+      const isCorrect = checkWordHash(wordLower, state.titleHashes, state.salt);
+
+      // Calculate new state
+      const newSelectedWords = [...state.selectedWords, wordLower];
+      const newCorrectWords = isCorrect ? [...state.correctWords, wordLower] : state.correctWords;
+      const newWrongWords = !isCorrect ? [...state.wrongWords, wordLower] : state.wrongWords;
+      const newTriesLeft = isCorrect ? state.triesLeft : state.triesLeft - 1;
+
+      // Check win/lose
+      const won =
+        isCorrect && checkWinConditionByHashes(newSelectedWords, state.titleHashes, state.salt);
+      const lost = newTriesLeft <= 0;
+      const gameOver = won || lost;
+
+      // Decrypt movie info immediately if game is over
+      const movieInfo =
+        gameOver && state.encryptedMovie
+          ? decryptMovieInfo(state.encryptedMovie, state.salt)
+          : null;
+
+      // Update state immediately
+      setState((prev) => ({
+        ...prev,
+        selectedWords: newSelectedWords,
+        correctWords: newCorrectWords,
+        wrongWords: newWrongWords,
+        triesLeft: newTriesLeft,
+        won,
+        gameOver,
+        ...(movieInfo ? { movieTitle: movieInfo.title, movieYear: movieInfo.year } : {}),
+      }));
+
+      // Sync to server in background
+      void syncToServer({
+        selectedWords: newSelectedWords,
+        correctWords: newCorrectWords,
+        triesLeft: newTriesLeft,
+        gameOver,
+        won,
+      });
+    },
+    [
+      state.gameOver,
+      state.selectedWords,
+      state.correctWords,
+      state.wrongWords,
+      state.triesLeft,
+      state.titleHashes,
+      state.salt,
+      state.encryptedMovie,
+      syncToServer,
+    ]
+  );
 
   // Get visible emojis based on tries left
-  const visibleEmojis = state.emojis.map((emoji, index) => ({
+  const visibleEmojis = state.emojis.map((emoji) => ({
     emoji,
-    visible: index < state.triesLeft,
+    visible: true,
   }));
 
   // Filter word cloud
-  const filteredWords = state.wordCloud.filter(word =>
+  const filteredWords = state.wordCloud.filter((word) =>
     word.toLowerCase().includes(filter.toLowerCase())
   );
 
   // Generate share text
   const getShareText = useCallback(() => {
-    const circles = state.emojis.map((_, index) => {
-      if (index < state.triesLeft) return '🟢';
-      return '🔴';
-    }).join('');
-    
+    const circles = state.emojis
+      .map((_, index) => {
+        if (index < state.triesLeft) return '🟢';
+        return '🔴';
+      })
+      .join('');
+
     const result = state.won ? '🎬' : '💀';
     const tries = state.won ? `${6 - state.triesLeft + 1}/6` : 'X/6';
-    
+
     return `Kinoticon Day ${state.dayNumber} ${result}\n${tries}\n${circles}\n\nPlay at reddit.com/r/kinoticon`;
   }, [state.emojis, state.triesLeft, state.won, state.dayNumber]);
 
@@ -320,7 +335,7 @@ export function useGame() {
     error: state.error,
     stats,
     filter,
-    
+
     // Actions
     setFilter,
     makeGuess,

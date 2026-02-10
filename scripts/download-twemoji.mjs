@@ -23,7 +23,15 @@ function isEmoji(s) {
   if (!t || t.length > 20) return false;
   return [...t].some((c) => {
     const cp = c.codePointAt(0) ?? 0;
-    return (cp >= 0x1f300 && cp <= 0x1f9ff) || (cp >= 0x2600 && cp <= 0x27bf) || (cp >= 0x1f1e6 && cp <= 0x1f1ff) || (cp >= 0x2300 && cp <= 0x23ff) || (cp >= 0x2b50 && cp <= 0x2b55) || (cp >= 0x1f600 && cp <= 0x1f64f) || (cp >= 0x1f900 && cp <= 0x1f9ff);
+    return (
+      (cp >= 0x1f300 && cp <= 0x1f9ff) ||
+      (cp >= 0x2600 && cp <= 0x27bf) ||
+      (cp >= 0x1f1e6 && cp <= 0x1f1ff) ||
+      (cp >= 0x2300 && cp <= 0x23ff) ||
+      (cp >= 0x2b50 && cp <= 0x2b55) ||
+      (cp >= 0x1f600 && cp <= 0x1f64f) ||
+      (cp >= 0x1f900 && cp <= 0x1f9ff)
+    );
   });
 }
 
@@ -37,9 +45,11 @@ function extractEmojisFromMovies(content) {
   const list = new Set();
   const arrayBlocks = content.matchAll(/emojis: \[([\s\S]*?)\],/g);
   for (const [, block] of arrayBlocks) {
-    const quoted = block.matchAll(/"([^"]*)"/g);
-    for (const [, s] of quoted) {
-      if (s.trim() && isEmoji(s)) list.add(s);
+    // Match both double- and single-quoted strings
+    const quoted = block.matchAll(/(?:"([^"]*)"|'([^']*)')/g);
+    for (const [, d, s] of quoted) {
+      const str = (d ?? s ?? '').trim();
+      if (str && isEmoji(str)) list.add(str);
     }
   }
   return [...list];
@@ -67,7 +77,9 @@ async function main() {
   const content = fs.readFileSync(moviesPath, 'utf8');
   const movieEmojis = extractEmojisFromMovies(content);
   const emojis = [...new Set([...movieEmojis, ...UI_EMOJI])];
-  console.log(`Found ${movieEmojis.length} emoji in movies + ${UI_EMOJI.length} UI → ${emojis.length} unique`);
+  console.log(
+    `Found ${movieEmojis.length} emoji in movies + ${UI_EMOJI.length} UI → ${emojis.length} unique`
+  );
 
   fs.mkdirSync(outDir, { recursive: true });
 

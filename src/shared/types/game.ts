@@ -28,10 +28,13 @@ export interface PlayerStats {
 export interface DailyGameResponse {
   emojis: string[];
   wordCloud: string[];
+  titleHashes: string[];
+  salt: string;
   triesLeft: number;
   gameOver: boolean;
   won: boolean;
   selectedWords: string[];
+  correctWords?: string[];
   dayNumber: number;
   alreadyPlayed: boolean;
   encryptedMovie?: string; // Encrypted movie info for instant reveal

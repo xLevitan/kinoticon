@@ -3,28 +3,170 @@ import { movieDatabase } from '../data/movies';
 
 // Common words to exclude (articles, prepositions, etc.)
 const STOP_WORDS = new Set([
-  'the', 'a', 'an', 'and', 'or', 'but', 'of', 'in', 'on', 'at', 'to', 'for', 'with',
-  'is', 'it', 'as', 'by', 'be', 'this', 'that', 'from', 'are', 'was', 'were', 'been',
-  'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should',
-  'may', 'might', 'must', 'can', 'shall', 'vs', 'vol', 'part', 'episode', 'chapter'
+  'the',
+  'a',
+  'an',
+  'and',
+  'or',
+  'but',
+  'of',
+  'in',
+  'on',
+  'at',
+  'to',
+  'for',
+  'with',
+  'is',
+  'it',
+  'as',
+  'by',
+  'be',
+  'this',
+  'that',
+  'from',
+  'are',
+  'was',
+  'were',
+  'been',
+  'have',
+  'has',
+  'had',
+  'do',
+  'does',
+  'did',
+  'will',
+  'would',
+  'could',
+  'should',
+  'may',
+  'might',
+  'must',
+  'can',
+  'shall',
+  'vs',
+  'vol',
+  'part',
+  'episode',
+  'chapter',
 ]);
 
 // Base word list for decoys (common movie-related words)
 const BASE_WORD_LIST = [
-  'action', 'adventure', 'love', 'war', 'death', 'life', 'dream', 'night', 'day',
-  'king', 'queen', 'prince', 'princess', 'hero', 'villain', 'monster', 'ghost',
-  'city', 'world', 'space', 'time', 'future', 'past', 'secret', 'mystery',
-  'dark', 'light', 'fire', 'water', 'earth', 'sky', 'star', 'moon', 'sun',
-  'man', 'woman', 'boy', 'girl', 'child', 'family', 'friend', 'enemy',
-  'home', 'house', 'castle', 'island', 'mountain', 'forest', 'ocean', 'river',
-  'gold', 'silver', 'diamond', 'magic', 'power', 'force', 'spirit', 'soul',
-  'blood', 'heart', 'mind', 'eye', 'hand', 'shadow', 'storm', 'wind',
-  'game', 'story', 'tale', 'legend', 'myth', 'saga', 'chronicles', 'journey',
-  'battle', 'fight', 'quest', 'mission', 'escape', 'revenge', 'return',
-  'final', 'last', 'first', 'new', 'old', 'great', 'little', 'big', 'small',
-  'wild', 'lost', 'hidden', 'broken', 'fallen', 'rising', 'coming', 'going',
-  'american', 'iron', 'steel', 'stone', 'wood', 'glass', 'metal', 'robot',
-  'alien', 'human', 'animal', 'bird', 'fish', 'dragon', 'wolf', 'lion', 'bear'
+  'action',
+  'adventure',
+  'love',
+  'war',
+  'death',
+  'life',
+  'dream',
+  'night',
+  'day',
+  'king',
+  'queen',
+  'prince',
+  'princess',
+  'hero',
+  'villain',
+  'monster',
+  'ghost',
+  'city',
+  'world',
+  'space',
+  'time',
+  'future',
+  'past',
+  'secret',
+  'mystery',
+  'dark',
+  'light',
+  'fire',
+  'water',
+  'earth',
+  'sky',
+  'star',
+  'moon',
+  'sun',
+  'man',
+  'woman',
+  'boy',
+  'girl',
+  'child',
+  'family',
+  'friend',
+  'enemy',
+  'home',
+  'house',
+  'castle',
+  'island',
+  'mountain',
+  'forest',
+  'ocean',
+  'river',
+  'gold',
+  'silver',
+  'diamond',
+  'magic',
+  'power',
+  'force',
+  'spirit',
+  'soul',
+  'blood',
+  'heart',
+  'mind',
+  'eye',
+  'hand',
+  'shadow',
+  'storm',
+  'wind',
+  'game',
+  'story',
+  'tale',
+  'legend',
+  'myth',
+  'saga',
+  'chronicles',
+  'journey',
+  'battle',
+  'fight',
+  'quest',
+  'mission',
+  'escape',
+  'revenge',
+  'return',
+  'final',
+  'last',
+  'first',
+  'new',
+  'old',
+  'great',
+  'little',
+  'big',
+  'small',
+  'wild',
+  'lost',
+  'hidden',
+  'broken',
+  'fallen',
+  'rising',
+  'coming',
+  'going',
+  'american',
+  'iron',
+  'steel',
+  'stone',
+  'wood',
+  'glass',
+  'metal',
+  'robot',
+  'alien',
+  'human',
+  'animal',
+  'bird',
+  'fish',
+  'dragon',
+  'wolf',
+  'lion',
+  'bear',
 ];
 
 // Extract words from a movie title
@@ -33,49 +175,44 @@ function extractWordsFromTitle(title: string): string[] {
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, ' ')
     .split(/\s+/)
-    .filter(word => word.length > 1 && !STOP_WORDS.has(word));
+    .filter((word) => word.length > 1 && !STOP_WORDS.has(word));
 }
 
 // Generate word cloud for a movie
 export function generateWordCloud(movie: Movie, seed: number = 0): string[] {
   const titleWords = extractWordsFromTitle(movie.title);
   const wordSet = new Set<string>();
-  
+
   // Add all words from the target movie title
-  titleWords.forEach(word => wordSet.add(word));
-  
+  titleWords.forEach((word) => wordSet.add(word));
+
   // Add some words from other random movies as decoys (fewer = less scroll on desktop)
   const usedDecoyWords = new Set<string>();
   const numDecoys = Math.min(11, movieDatabase.length);
-  
+
   for (let i = 0; i < numDecoys; i++) {
     const randomIndex = (seed + i * 7) % movieDatabase.length;
     const decoyMovie = movieDatabase[randomIndex];
-    
-    if (decoyMovie.title !== movie.title) {
-      const decoyWords = extractWordsFromTitle(decoyMovie.title);
-      decoyWords.forEach(word => {
-        // Only add if it's not in the target title
-        if (!titleWords.includes(word)) {
-          usedDecoyWords.add(word);
-        }
-      });
-    }
+    if (!decoyMovie || decoyMovie.title === movie.title) continue;
+    const decoyWords = extractWordsFromTitle(decoyMovie.title);
+    decoyWords.forEach((word) => {
+      if (!titleWords.includes(word)) usedDecoyWords.add(word);
+    });
   }
-  
+
   // Add decoy words from other movies
-  usedDecoyWords.forEach(word => wordSet.add(word));
-  
+  usedDecoyWords.forEach((word) => wordSet.add(word));
+
   // Add some base words as additional decoys
   const numBaseWords = 7;
   for (let i = 0; i < numBaseWords; i++) {
     const randomIndex = (seed + i * 13) % BASE_WORD_LIST.length;
     const baseWord = BASE_WORD_LIST[randomIndex];
-    if (!titleWords.includes(baseWord)) {
+    if (baseWord !== undefined && !titleWords.includes(baseWord)) {
       wordSet.add(baseWord);
     }
   }
-  
+
   // Convert to array and shuffle
   const words = Array.from(wordSet);
   return shuffleArray(words, seed);
@@ -85,13 +222,18 @@ export function generateWordCloud(movie: Movie, seed: number = 0): string[] {
 function shuffleArray<T>(array: T[], seed: number): T[] {
   const result = [...array];
   let currentSeed = seed;
-  
+
   for (let i = result.length - 1; i > 0; i--) {
     currentSeed = (currentSeed * 1103515245 + 12345) & 0x7fffffff;
     const j = currentSeed % (i + 1);
-    [result[i], result[j]] = [result[j], result[i]];
+    const a = result[i];
+    const b = result[j];
+    if (a !== undefined && b !== undefined) {
+      result[i] = b;
+      result[j] = a;
+    }
   }
-  
+
   return result;
 }
 
@@ -105,12 +247,12 @@ export function isWordInTitle(word: string, movie: Movie): boolean {
 // Check if enough words have been correctly guessed to win
 export function checkWinCondition(selectedWords: string[], movie: Movie): boolean {
   const titleWords = extractWordsFromTitle(movie.title);
-  
+
   if (titleWords.length === 0) return false;
-  
+
   // Count how many important title words have been matched
   let matchedCount = 0;
-  
+
   for (const titleWord of titleWords) {
     for (const selectedWord of selectedWords) {
       const selectedLower = selectedWord.toLowerCase();
@@ -120,7 +262,7 @@ export function checkWinCondition(selectedWords: string[], movie: Movie): boolea
       }
     }
   }
-  
+
   // Win if at least 70% of important words are matched
   const winThreshold = Math.ceil(titleWords.length * 0.7);
   return matchedCount >= winThreshold;
@@ -133,7 +275,7 @@ export function hashWord(word: string, salt: string): string {
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
     const char = str.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
+    hash = (hash << 5) - hash + char;
     hash = hash & hash; // Convert to 32bit integer
   }
   return hash.toString(36);
@@ -142,7 +284,7 @@ export function hashWord(word: string, salt: string): string {
 // Generate hashes for all valid title words
 export function generateTitleHashes(movie: Movie, salt: string): string[] {
   const titleWords = extractWordsFromTitle(movie.title);
-  return titleWords.map(word => hashWord(word, salt));
+  return titleWords.map((word) => hashWord(word, salt));
 }
 
 // Check if a word matches any of the title hashes
@@ -153,15 +295,15 @@ export function checkWordHash(word: string, hashes: string[], salt: string): boo
 
 // Calculate win condition based on matched hashes
 export function checkWinConditionByHashes(
-  selectedWords: string[], 
-  titleHashes: string[], 
+  selectedWords: string[],
+  titleHashes: string[],
   salt: string
 ): boolean {
   if (titleHashes.length === 0) return false;
-  
+
   let matchedCount = 0;
   const matchedHashes = new Set<string>();
-  
+
   for (const word of selectedWords) {
     const wordHash = hashWord(word.toLowerCase(), salt);
     if (titleHashes.includes(wordHash) && !matchedHashes.has(wordHash)) {
@@ -169,7 +311,7 @@ export function checkWinConditionByHashes(
       matchedCount++;
     }
   }
-  
+
   const winThreshold = Math.ceil(titleHashes.length * 0.7);
   return matchedCount >= winThreshold;
 }
@@ -183,10 +325,13 @@ export function encryptMovieInfo(title: string, year: number, salt: string): str
   for (let i = 0; i < data.length; i++) {
     bytes.push(data.charCodeAt(i) ^ key.charCodeAt(i % key.length));
   }
-  return bytes.map(b => b.toString(16).padStart(2, '0')).join('');
+  return bytes.map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-export function decryptMovieInfo(encrypted: string, salt: string): { title: string; year: number } | null {
+export function decryptMovieInfo(
+  encrypted: string,
+  salt: string
+): { title: string; year: number } | null {
   try {
     const key = salt + 'kinoticon';
     const bytes: number[] = [];
@@ -195,7 +340,9 @@ export function decryptMovieInfo(encrypted: string, salt: string): { title: stri
     }
     let result = '';
     for (let i = 0; i < bytes.length; i++) {
-      result += String.fromCharCode(bytes[i] ^ key.charCodeAt(i % key.length));
+      const byte = bytes[i];
+      if (byte === undefined) continue;
+      result += String.fromCharCode(byte ^ key.charCodeAt(i % key.length));
     }
     const parsed = JSON.parse(result);
     return { title: parsed.t, year: parsed.y };
