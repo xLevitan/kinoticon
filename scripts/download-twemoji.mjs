@@ -41,15 +41,27 @@ function toCodePoint(emoji) {
     .join('-');
 }
 
+/** Split string into grapheme clusters (so '🧍‍♂️🧍‍♂️' → ['🧍‍♂️', '🧍‍♂️']). */
+function splitGraphemes(str) {
+  if (typeof Intl.Segmenter !== 'undefined') {
+    return [...new Intl.Segmenter('en', { granularity: 'grapheme' }).segment(str)].map((s) => s.segment);
+  }
+  return [...str];
+}
+
 function extractEmojisFromMovies(content) {
   const list = new Set();
-  const arrayBlocks = content.matchAll(/emojis: \[([\s\S]*?)\],/g);
+  // Match emojis: ['x','y'] }, or emojis: ['x','y'] ] at end
+  const arrayBlocks = content.matchAll(/emojis: \[([\s\S]*?)\]\s*[,\}\]]/g);
   for (const [, block] of arrayBlocks) {
     // Match both double- and single-quoted strings
     const quoted = block.matchAll(/(?:"([^"]*)"|'([^']*)')/g);
     for (const [, d, s] of quoted) {
       const str = (d ?? s ?? '').trim();
-      if (str && isEmoji(str)) list.add(str);
+      if (!str) continue;
+      for (const part of splitGraphemes(str)) {
+        if (isEmoji(part)) list.add(part);
+      }
     }
   }
   return [...list];

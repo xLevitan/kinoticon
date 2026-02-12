@@ -1,19 +1,43 @@
 @import 'tailwindcss';
 
-/* Root fill — no scroll anywhere in the app */
-html,
-body,
-#root {
-  height: 100%;
+/* Root fill and background for light/dark (expanded webview never shows black) */
+html {
+  min-height: 100vh;
   min-height: 100dvh;
-  max-height: 100dvh;
-  width: 100%;
-  overflow: hidden;
+  height: 100%;
+  background-color: #f9fafb;
+}
+html.dark {
+  background-color: #111827;
+}
+html.retro,
+html.retro body,
+html.retro #root {
   background-color: #008080;
 }
 body,
 #root {
+  min-height: 100vh;
+  min-height: 100dvh;
+  height: 100%;
+  width: 100%;
   background-color: inherit;
+}
+/* Only lock overflow in retro mode */
+html.retro,
+html.retro body,
+html.retro #root {
+  max-height: 100dvh;
+  overflow: hidden;
+}
+/* Enable dark mode via .dark class on html */
+@custom-variant dark {
+  &:where(.dark, .dark *) {
+    @slot;
+  }
+}
+.dark {
+  color-scheme: dark;
 }
 /* Safe area for notched devices in fullscreen */
 #root {
@@ -36,6 +60,19 @@ body,
 
 .animate-fade-in-up {
   animation: fadeInUp 0.3s ease-out forwards;
+}
+
+/* Simple UI: изоляция от react95, без overflow-хаков */
+[data-mode='simple'] {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+[data-mode='simple'] * {
+  box-sizing: border-box;
+}
+[data-mode='simple'] header {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
 }
 
 /* WordArt-style title on desktop above game window */
@@ -73,4 +110,35 @@ button.word-button-pressed *,
   color: #fff !important;
   -webkit-text-fill-color: #fff !important;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+/* Simple UI mobile */
+@media (max-width: 640px) {
+  [data-mode='simple'] header button {
+    flex-shrink: 0;
+  }
+
+  [data-mode='simple'] .flex-wrap button {
+    min-height: 32px;
+  }
+
+  [data-mode='simple'] input {
+    min-height: 42px;
+  }
+}
+
+/* Simple UI desktop */
+@media (min-width: 640px) {
+  [data-mode='simple'] {
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  [data-mode='simple'] header button {
+    flex-shrink: 0;
+  }
+
+  [data-mode='simple'] .flex-wrap button {
+    min-height: 34px;
+  }
 }

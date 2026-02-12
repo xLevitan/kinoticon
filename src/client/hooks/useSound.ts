@@ -7,6 +7,7 @@ const SOUND_PATHS = {
   type: ['type_01.wav', 'type_02.wav', 'type_03.wav', 'type_04.wav', 'type_05.wav'],
   select: 'select.wav',
   caution: 'caution.wav',
+  ringtone: 'ringtone_loop.wav',
   celebration: 'celebration.wav',
   button: 'button.wav',
   transition_up: 'transition_up.wav',
@@ -20,6 +21,7 @@ function resolveSoundUrls(): {
   type: readonly string[];
   select: string;
   caution: string;
+  ringtone: string;
   celebration: string;
   button: string;
   transition_up: string;
@@ -32,6 +34,7 @@ function resolveSoundUrls(): {
     type: SOUND_PATHS.type.map((p) => getAssetUrl(p)),
     select: getAssetUrl(SOUND_PATHS.select),
     caution: getAssetUrl(SOUND_PATHS.caution),
+    ringtone: getAssetUrl(SOUND_PATHS.ringtone),
     celebration: getAssetUrl(SOUND_PATHS.celebration),
     button: getAssetUrl(SOUND_PATHS.button),
     transition_up: getAssetUrl(SOUND_PATHS.transition_up),
@@ -58,6 +61,7 @@ export function useSound() {
       ...SOUND_URLS.type,
       SOUND_URLS.select,
       SOUND_URLS.caution,
+      SOUND_URLS.ringtone,
       SOUND_URLS.celebration,
       SOUND_URLS.button,
       SOUND_URLS.transition_up,
@@ -137,7 +141,7 @@ export function useSound() {
     playCorrect: useCallback(() => play(SOUND_URLS.select), [play]),
     playWrong: useCallback(() => play(SOUND_URLS.caution), [play]),
     playWin: useCallback(() => play(SOUND_URLS.celebration), [play]),
-    playLose: useCallback(() => play(SOUND_URLS.caution), [play]),
+    playLose: useCallback(() => play(SOUND_URLS.ringtone), [play]),
     playUISound: useCallback(() => play(SOUND_URLS.button), [play]),
     playUIMenu: useCallback(() => play(SOUND_URLS.transition_up), [play]),
     playUITheme: useCallback(() => {

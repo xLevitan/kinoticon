@@ -1,54 +1,6 @@
 import type { Movie } from '../types/game';
 import { movieDatabase } from '../data/movies';
-
-// Common words to exclude (articles, prepositions, etc.)
-const STOP_WORDS = new Set([
-  'the',
-  'a',
-  'an',
-  'and',
-  'or',
-  'but',
-  'of',
-  'in',
-  'on',
-  'at',
-  'to',
-  'for',
-  'with',
-  'is',
-  'it',
-  'as',
-  'by',
-  'be',
-  'this',
-  'that',
-  'from',
-  'are',
-  'was',
-  'were',
-  'been',
-  'have',
-  'has',
-  'had',
-  'do',
-  'does',
-  'did',
-  'will',
-  'would',
-  'could',
-  'should',
-  'may',
-  'might',
-  'must',
-  'can',
-  'shall',
-  'vs',
-  'vol',
-  'part',
-  'episode',
-  'chapter',
-]);
+import { extractWordsFromTitle, matchesWord } from './wordNormalization';
 
 // Base word list for decoys (common movie-related words)
 const BASE_WORD_LIST = [
@@ -169,15 +121,6 @@ const BASE_WORD_LIST = [
   'bear',
 ];
 
-// Extract words from a movie title
-function extractWordsFromTitle(title: string): string[] {
-  return title
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .split(/\s+/)
-    .filter((word) => word.length > 1 && !STOP_WORDS.has(word));
-}
-
 // Generate word cloud for a movie
 export function generateWordCloud(movie: Movie, seed: number = 0): string[] {
   const titleWords = extractWordsFromTitle(movie.title);
@@ -255,8 +198,7 @@ export function checkWinCondition(selectedWords: string[], movie: Movie): boolea
 
   for (const titleWord of titleWords) {
     for (const selectedWord of selectedWords) {
-      const selectedLower = selectedWord.toLowerCase();
-      if (titleWord.includes(selectedLower) || selectedLower.includes(titleWord)) {
+      if (matchesWord(selectedWord, titleWord)) {
         matchedCount++;
         break;
       }

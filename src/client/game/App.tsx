@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import { createGlobalStyle, ThemeProvider } from 'styled-components';
 import { context, requestExpandedMode } from '@devvit/web/client';
 import {
   Button,
@@ -10,9 +11,21 @@ import {
   WindowContent,
   WindowHeader,
 } from 'react95';
+import { styleReset } from 'react95';
+import original from 'react95/dist/themes/original';
 import { useGame } from '../hooks/useGame';
 import { useSound } from '../hooks/useSound';
+import { useTheme } from '../hooks/useTheme';
 import { getTwemojiUrl, preloadTwemoji, UI_EMOJI } from '../utils/twemoji';
+import { getAssetUrl } from '../utils/assetUrl';
+import { getSessionId, storeSessionIdFromResponse } from '../utils/sessionId';
+
+const RetroGlobalStyles = createGlobalStyle`
+  ${styleReset}
+  body {
+    font-family: 'Segoe UI', 'Tahoma', sans-serif;
+  }
+`;
 
 const STARTED_KEY_PREFIX = 'kinoticon-started-';
 
@@ -123,7 +136,7 @@ export const App = () => {
     getShareText,
     reload,
     loadStats,
-    isDevSubreddit,
+    isModerator,
     testDay,
     resetDayResult,
     setTestDay,
@@ -166,6 +179,7 @@ export const App = () => {
   const [copied, setCopied] = useState(false);
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [showLoadingAfterPlay, setShowLoadingAfterPlay] = useState(false);
+  const [wordsInteractive, setWordsInteractive] = useState(false);
   const loadingStartRef = useRef<number | null>(null);
 
   const {
@@ -182,11 +196,17 @@ export const App = () => {
     playUIStats,
     playUIClose,
     playUIType,
+    playUITheme,
   } = useSound();
+  const { theme, isRetro, isDark, toggle: toggleTheme } = useTheme();
 
-  // Preload UI emoji on mount so icons appear instantly
+  // Preload UI emoji and splash images on mount so icons appear instantly
   useEffect(() => {
     void preloadTwemoji(UI_EMOJI);
+    [getAssetUrl('splash-light.png'), getAssetUrl('splash-dark.png')].forEach((url) => {
+      const img = new Image();
+      img.src = url;
+    });
   }, []);
 
   // Show loading screen when actually loading OR right after Play (so bar always runs 0→100)
@@ -225,6 +245,16 @@ export const App = () => {
     const t = setTimeout(() => setShowLoadingAfterPlay(false), 50);
     return () => clearTimeout(t);
   }, [showLoadingAfterPlay, visibleEmojis.length]);
+
+  // Delay before words become clickable — prevents accidental tap when releasing Play
+  useEffect(() => {
+    if (isLoadingScreen || visibleEmojis.length === 0) {
+      setWordsInteractive(false);
+      return;
+    }
+    const t = setTimeout(() => setWordsInteractive(true), 350);
+    return () => clearTimeout(t);
+  }, [isLoadingScreen, visibleEmojis.length]);
 
   // Once we know the day: skip splash for days the user has already started
   useEffect(() => {
@@ -337,85 +367,690 @@ export const App = () => {
     return {};
   };
 
-  // Splash screen before game starts — same layout as game: WordArt at top, then content, then footer
+  // Splash screen before game starts
   if (!started) {
+    if (!isRetro) {
+      // Simple splash (light/dark): keyhole with green outline (light) / orange outline (dark + alpha)
+      const splashSrc = isDark ? getAssetUrl('splash-dark.png') : getAssetUrl('splash-light.png');
+      return (
+        <div className="h-screen h-[100dvh] overflow-hidden flex flex-col justify-center items-center bg-gray-50 dark:bg-gray-900 p-4 gap-3 sm:gap-4">
+          <div className="shrink-0 text-center order-first">
+            <h1 className="text-2xl sm:text-3xl font-bold text-green-600 dark:text-green-400 mb-1 sm:mb-2">
+              Kinoticon
+            </h1>
+            <p className="text-sm sm:text-base text-gray-600 dark:text-gray-400">
+              Guess the movie from emojis!
+            </p>
+          </div>
+          <img
+            src={splashSrc}
+            alt=""
+            className="w-[12.5rem] h-[12.5rem] sm:w-[15rem] sm:h-[15rem] max-w-[85vw] max-h-[35vh] object-contain shrink min-w-0"
+            draggable={false}
+          />
+          <div className="shrink-0 flex flex-col items-center gap-2 sm:gap-3">
+          <p className="text-base sm:text-lg text-gray-700 dark:text-gray-300">
+            Hey {context?.username ?? 'there'} 👋
+          </p>
+          <button
+            onClick={() => {
+              playClick();
+              if (dayNumber > 0) {
+                localStorage.setItem(getStartedKey(dayNumber), '1');
+              }
+              setLoadingProgress(0);
+              setShowLoadingAfterPlay(true);
+              setStarted(true);
+            }}
+            className="px-6 sm:px-8 py-2.5 sm:py-3 bg-green-500 text-white text-base sm:text-lg font-medium rounded-full hover:bg-green-600 transition-colors shadow-lg"
+          >
+            ▶ Play
+          </button>
+          <p
+            className={`text-xs sm:text-sm text-gray-500 dark:text-gray-400 select-none ${
+              isModerator ? 'cursor-pointer' : ''
+            }`}
+            {...(isModerator ? { onClick: () => setShowDevMenu(true) } : {})}
+          >
+            Day {dayNumber}
+            {isModerator && testDay ? ' (test)' : ''} • New puzzle daily
+          </p>
+          </div>
+        </div>
+      );
+    }
+    // Retro splash (Win95) — needs ThemeProvider for react95 components
+    return (
+      <ThemeProvider theme={original}>
+        <RetroGlobalStyles />
+        <div
+          className="h-screen h-[100dvh] flex flex-col items-center overflow-hidden"
+          style={{ background: '#008080' }}
+        >
+          {/* WordArt: same position as in game */}
+          <div className="shrink-0 pt-4 pb-2 sm:pt-6 sm:pb-3 flex justify-center w-full" aria-hidden>
+            <span className="wordart-kinoticon">Kinoticon</span>
+          </div>
+          <div className="flex-1 min-h-0 w-full flex flex-col items-center justify-center px-3 sm:px-4">
+            <Window className="max-w-sm w-full shrink-0">
+              <WindowHeader className="flex items-center justify-center">
+                <span>Kinoticon</span>
+              </WindowHeader>
+              <WindowContent className="flex flex-col items-center gap-3 py-4">
+                <img
+                  src={getTwemojiUrl('🎬')}
+                  alt=""
+                  className="w-14 h-14 sm:w-16 sm:h-16 object-contain"
+                  draggable={false}
+                />
+                <p className="text-center text-sm">Guess the movie from emojis!</p>
+                <p>Hey {context?.username ?? 'there'} 👋</p>
+                <Button
+                  primary
+                  size="lg"
+                  onClick={() => {
+                    playClick();
+                    if (dayNumber > 0) {
+                      localStorage.setItem(getStartedKey(dayNumber), '1');
+                    }
+                    setLoadingProgress(0);
+                    setShowLoadingAfterPlay(true);
+                    setStarted(true);
+                  }}
+                >
+                  ▶ Play
+                </Button>
+                <p
+                  className={`text-xs select-none ${isModerator ? 'cursor-pointer' : ''}`}
+                  {...(isModerator ? { onClick: () => setShowDevMenu(true) } : {})}
+                >
+                  Day {dayNumber}
+                  {isModerator && testDay ? ' (test)' : ''} • New puzzle daily
+                </p>
+              </WindowContent>
+            </Window>
+          </div>
+          <footer
+            className="shrink-0 mt-3 mb-2 sm:mt-4 sm:mb-3 text-center w-full text-[9px] sm:text-[10px]"
+            style={{ color: 'rgba(255,255,255,0.85)' }}
+          >
+            Guess the movie from emojis • New puzzle daily
+          </footer>
+        </div>
+      </ThemeProvider>
+    );
+  }
+
+  if (isLoadingScreen) {
+    if (!isRetro) {
+      // Simple loading (light/dark) — flat CSS spinner, no extra libs
+      return (
+        <div className="flex flex-col items-center justify-center gap-4 min-h-screen min-h-[100dvh] bg-gray-50 dark:bg-gray-900">
+          <div
+            className="h-10 w-10 rounded-full border-2 border-gray-200 dark:border-gray-700 border-t-green-500 dark:border-t-green-400 animate-spin"
+            aria-hidden
+          />
+          <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Loading...</p>
+        </div>
+      );
+    }
+    // Retro loading (Win95) — needs ThemeProvider for react95 components
+    return (
+      <ThemeProvider theme={original}>
+        <RetroGlobalStyles />
+        <div
+          className="h-screen h-[100dvh] flex flex-col items-center justify-center overflow-hidden px-4"
+          style={{ background: '#008080' }}
+        >
+          <Panel variant="well" className="w-full max-w-xs px-6 py-4 flex flex-col gap-3">
+            <span>Loading...</span>
+            <ProgressBar value={loadingProgress} className="w-full" />
+          </Panel>
+        </div>
+      </ThemeProvider>
+    );
+  }
+
+  // Simple UI (light/dark) - from previous commit
+  if (!isRetro) {
+    const getWordClass = (word: string) => {
+      const wordLower = word.toLowerCase();
+      if (correctWords.includes(wordLower)) return 'bg-green-500 text-white';
+      if (wrongWords.includes(wordLower)) return 'bg-red-500 text-white';
+      if (selectedWords.includes(wordLower))
+        return 'bg-gray-400 dark:bg-gray-600 text-white';
+      return 'bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-200';
+    };
+
     return (
       <div
-        className="h-screen h-[100dvh] flex flex-col items-center overflow-hidden"
-        style={{ background: '#008080' }}
+        data-mode="simple"
+        className="flex flex-col min-h-screen min-h-[100dvh] bg-gray-50 dark:bg-gray-900 pt-4 px-1.5 pb-1.5 sm:p-3 transition-colors"
       >
-        {/* WordArt: same position as in game */}
-        <div className="shrink-0 pt-4 pb-2 sm:pt-6 sm:pb-3 flex justify-center w-full" aria-hidden>
-          <span className="wordart-kinoticon">Kinoticon</span>
-        </div>
-        <div className="flex-1 min-h-0 w-full flex flex-col items-center justify-center px-3 sm:px-4">
-          <Window className="max-w-sm w-full shrink-0">
-            <WindowHeader className="flex items-center justify-center">
-              <span>Kinoticon</span>
-            </WindowHeader>
-            <WindowContent className="flex flex-col items-center gap-3 py-4">
-              <img
-                src={getTwemojiUrl('🎬')}
-                alt=""
-                className="w-14 h-14 sm:w-16 sm:h-16 object-contain"
-                draggable={false}
+        {/* Header */}
+        <header className="flex items-center justify-between gap-2 shrink-0 mb-2 sm:mb-3">
+          <div className="min-w-0 flex items-center gap-2">
+            <h1 className="text-lg sm:text-xl font-bold text-green-600 dark:text-green-400 truncate">
+              Kinoticon
+            </h1>
+            <span
+              className={`text-xs sm:text-sm text-gray-500 dark:text-gray-400 shrink-0 select-none opacity-80 ${isModerator ? 'cursor-pointer' : ''}`}
+              {...(isModerator ? { onClick: () => setShowDevMenu(true) } : {})}
+            >
+              Day {dayNumber}
+              {isModerator && testDay ? ' (test)' : ''}
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            {isModerator && (
+              <button
+                onClick={() => {
+                  playUIMenu();
+                  setShowDevMenu(true);
+                }}
+                className="w-9 h-9 sm:w-10 sm:h-10 shrink-0 rounded-full bg-yellow-200 dark:bg-yellow-700 flex items-center justify-center text-sm hover:bg-yellow-300 dark:hover:bg-yellow-600 transition-colors"
+                title="Dev Mode - Change Day"
+              >
+                <img src={getTwemojiUrl('🛠️')} alt="" className="w-5 h-5 object-contain" draggable={false} />
+              </button>
+            )}
+            <button
+              onClick={() => {
+                toggleTheme();
+                playUITheme();
+              }}
+              className="w-9 h-9 sm:w-10 sm:h-10 shrink-0 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center text-sm hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
+              title={isDark ? 'Light mode' : 'Dark mode'}
+            >
+              <img src={getTwemojiUrl(isDark ? '☀️' : '🌙')} alt="" className="w-5 h-5 object-contain" draggable={false} />
+            </button>
+            <button
+              onClick={(e: React.MouseEvent) => {
+                playUIFullscreen();
+                void requestExpandedMode(e.nativeEvent, 'game');
+              }}
+              className="w-9 h-9 sm:w-10 sm:h-10 shrink-0 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center text-sm hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
+              title="Fullscreen"
+            >
+              <img src={getTwemojiUrl('↗️')} alt="" className="w-5 h-5 object-contain" draggable={false} />
+            </button>
+            <button
+              onClick={() => {
+                toggleSound();
+                playUISound();
+              }}
+              className="w-9 h-9 sm:w-10 sm:h-10 shrink-0 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center text-sm hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
+              title={soundEnabled ? 'Mute sounds' : 'Unmute sounds'}
+            >
+              <img src={getTwemojiUrl(soundEnabled ? '🔊' : '🔇')} alt="" className="w-5 h-5 object-contain" draggable={false} />
+            </button>
+            <button
+              onClick={() => {
+                setShowStats(!showStats);
+                playUIStats();
+              }}
+              className="w-9 h-9 sm:w-10 sm:h-10 shrink-0 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center text-sm hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
+            >
+              <img src={getTwemojiUrl('📊')} alt="" className="w-5 h-5 object-contain" draggable={false} />
+            </button>
+          </div>
+        </header>
+
+        {/* Main — центрирование по вертикали */}
+        <main className="flex-1 flex flex-col justify-center items-center gap-3 pt-4 sm:gap-0 sm:pt-0">
+          {/* Stats Modal */}
+          {showStats && (
+            <div
+              className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+              onClick={() => {
+                playUIClose();
+                setShowStats(false);
+                setLeaderboardOpen(false);
+              }}
+            >
+              <div
+                className="bg-white dark:bg-gray-800 rounded-xl p-4 sm:p-6 max-w-sm w-full max-h-[90vh] flex flex-col"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <h2 className="text-lg sm:text-xl font-bold mb-3 sm:mb-4 text-center dark:text-white">
+                  Your Stats
+                </h2>
+                <div className="grid grid-cols-4 gap-1 sm:gap-2 text-center">
+                  <div>
+                    <div className="text-xl sm:text-2xl font-bold text-green-600 dark:text-green-400">
+                      {stats.gamesPlayed}
+                    </div>
+                    <div className="text-[10px] sm:text-xs text-gray-500 dark:text-gray-400">
+                      Played
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xl sm:text-2xl font-bold text-green-600 dark:text-green-400">
+                      {stats.winRate}%
+                    </div>
+                    <div className="text-[10px] sm:text-xs text-gray-500 dark:text-gray-400">
+                      Win %
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xl sm:text-2xl font-bold text-green-600 dark:text-green-400">
+                      {stats.currentStreak}
+                    </div>
+                    <div className="text-[10px] sm:text-xs text-gray-500 dark:text-gray-400">
+                      Streak
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xl sm:text-2xl font-bold text-green-600 dark:text-green-400">
+                      {stats.maxStreak}
+                    </div>
+                    <div className="text-[10px] sm:text-xs text-gray-500 dark:text-gray-400">
+                      Max
+                    </div>
+                  </div>
+                </div>
+                <button
+                  onClick={async () => {
+                    if (leaderboardOpen) {
+                      setLeaderboardOpen(false);
+                      return;
+                    }
+                    setLeaderboardOpen(true);
+                    if (!leaderboardData) {
+                      setLeaderboardLoading(true);
+                      try {
+                        const res = await fetch('/api/game/leaderboard', {
+                          headers: { 'X-Session-Id': getSessionId() },
+                        });
+                        storeSessionIdFromResponse(res);
+                        const data = await res.json();
+                        if (data.top100) setLeaderboardData(data);
+                      } catch {
+                        // ignore
+                      }
+                      setLeaderboardLoading(false);
+                    }
+                  }}
+                  className="mt-3 w-full py-2 bg-gray-200 dark:bg-gray-600 text-gray-800 dark:text-gray-200 text-sm rounded-lg font-medium hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors"
+                >
+                  {leaderboardOpen ? 'Hide leaderboard' : 'Leaderboard'}
+                </button>
+                {leaderboardOpen && leaderboardLoading && (
+                  <div className="mt-3 text-center text-sm text-gray-500 dark:text-gray-400">
+                    Loading...
+                  </div>
+                )}
+                {leaderboardOpen && !leaderboardLoading && leaderboardData && (
+                  <div className="mt-3 flex-1 min-h-0 flex flex-col overflow-hidden border-t border-gray-200 dark:border-gray-600 pt-3">
+                    {leaderboardData.myRank != null && (
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mb-2 text-center">
+                        Your rank: {leaderboardData.myRank}
+                      </p>
+                    )}
+                    <div className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+                      Top 100
+                    </div>
+                    <div className="overflow-y-auto flex-1 min-h-0 border border-gray-200 dark:border-gray-600 rounded-lg">
+                      <table className="w-full text-[10px] sm:text-xs">
+                        <thead className="sticky top-0 bg-gray-100 dark:bg-gray-700 text-left">
+                          <tr>
+                            <th className="px-1 py-0.5">#</th>
+                            <th className="px-1 py-0.5 truncate max-w-[80px]">User</th>
+                            <th className="px-1 py-0.5">W</th>
+                            <th className="px-1 py-0.5">%</th>
+                            <th className="px-1 py-0.5">Str</th>
+                          </tr>
+                        </thead>
+                        <tbody className="dark:text-gray-200">
+                          {leaderboardData.top100.map((e) => (
+                            <tr
+                              key={e.rank}
+                              className="border-t border-gray-100 dark:border-gray-600"
+                            >
+                              <td className="px-1 py-0.5">{e.rank}</td>
+                              <td
+                                className="px-1 py-0.5 truncate max-w-[80px]"
+                                title={e.userId}
+                              >
+                                {e.userId}
+                              </td>
+                              <td className="px-1 py-0.5">{e.gamesWon}</td>
+                              <td className="px-1 py-0.5">{e.winRate}%</td>
+                              <td className="px-1 py-0.5">{e.currentStreak}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    {leaderboardData.aroundMe.length > 0 && (
+                      <>
+                        <div className="text-xs font-medium text-gray-600 dark:text-gray-400 mt-2 mb-1">
+                          Around you
+                        </div>
+                        <div className="overflow-y-auto max-h-24 border border-gray-200 dark:border-gray-600 rounded-lg">
+                          <table className="w-full text-[10px] sm:text-xs">
+                            <thead className="sticky top-0 bg-gray-100 dark:bg-gray-700 text-left">
+                              <tr>
+                                <th className="px-1 py-0.5">#</th>
+                                <th className="px-1 py-0.5 truncate max-w-[80px]">User</th>
+                                <th className="px-1 py-0.5">W</th>
+                                <th className="px-1 py-0.5">%</th>
+                                <th className="px-1 py-0.5">Str</th>
+                              </tr>
+                            </thead>
+                            <tbody className="dark:text-gray-200">
+                              {leaderboardData.aroundMe.map((e) => (
+                                <tr
+                                  key={e.rank}
+                                  className="border-t border-gray-100 dark:border-gray-600"
+                                >
+                                  <td className="px-1 py-0.5">{e.rank}</td>
+                                  <td
+                                    className="px-1 py-0.5 truncate max-w-[80px]"
+                                    title={e.userId}
+                                  >
+                                    {e.userId}
+                                  </td>
+                                  <td className="px-1 py-0.5">{e.gamesWon}</td>
+                                  <td className="px-1 py-0.5">{e.winRate}%</td>
+                                  <td className="px-1 py-0.5">{e.currentStreak}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+                <button
+                  onClick={() => {
+                    playUIClose();
+                    setShowStats(false);
+                    setLeaderboardOpen(false);
+                  }}
+                  className="mt-3 sm:mt-4 w-full py-2 bg-green-500 text-white text-sm sm:text-base rounded-lg font-medium hover:bg-green-600 transition-colors"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Dev Menu Modal */}
+          {isModerator && showDevMenu && (
+            <div
+              className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+              onClick={() => {
+                playUIClose();
+                setShowDevMenu(false);
+              }}
+            >
+              <div
+                className="bg-white dark:bg-gray-800 rounded-xl p-4 sm:p-6 max-w-sm w-full"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <h2 className="text-lg font-bold mb-3 text-center dark:text-white flex items-center justify-center gap-2">
+                  <img
+                    src={getTwemojiUrl('🛠️')}
+                    alt=""
+                    className="w-5 h-5 object-contain"
+                    draggable={false}
+                  />
+                  Dev Mode
+                </h2>
+                <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
+                  Current: Day {dayNumber}
+                  {testDay ? ` (test day ${testDay})` : ' (today)'}
+                </p>
+                <input
+                  type="number"
+                  placeholder="Enter day number (1-999)"
+                  value={devDayInput}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                    handleTypeSound();
+                    setDevDayInput(e.target.value);
+                  }}
+                  className="w-full px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-700 dark:text-white border-none outline-none focus:ring-2 focus:ring-green-500 mb-3"
+                  min="1"
+                  max="999"
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      setDevDayInput('');
+                      setTestDay(undefined);
+                      setShowDevMenu(false);
+                      void reload();
+                    }}
+                    className="flex-1 py-2 bg-gray-200 dark:bg-gray-600 text-gray-800 dark:text-white text-sm rounded-lg font-medium hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors"
+                  >
+                    Reset to Today
+                  </button>
+                  <button
+                    onClick={applyTestDay}
+                    className="flex-1 py-2 bg-green-500 text-white text-sm rounded-lg font-medium hover:bg-green-600 transition-colors"
+                  >
+                    Apply
+                  </button>
+                </div>
+                <button
+                  onClick={async () => {
+                    setResetDayMessage(null);
+                    const msg = await resetDayResult();
+                    if (msg) setResetDayMessage(msg);
+                  }}
+                  className="mt-2 w-full py-2 bg-gray-200 dark:bg-gray-600 text-gray-800 dark:text-gray-200 text-sm rounded-lg font-medium hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors"
+                >
+                  Reset day result
+                </button>
+                <button
+                  onClick={async () => {
+                    setResetStatsMessage(null);
+                    try {
+                      const res = await fetch('/api/dev/reset-stats', {
+                          method: 'POST',
+                          headers: { 'X-Session-Id': getSessionId() },
+                        });
+                      storeSessionIdFromResponse(res);
+                      const data = await res.json();
+                      if (data.status === 'success') {
+                        await loadStats();
+                        setResetStatsMessage(data.message ?? 'Stats reset.');
+                      } else {
+                        setResetStatsMessage(data.message ?? data.status ?? 'Failed');
+                      }
+                    } catch {
+                      setResetStatsMessage('Request failed');
+                    }
+                  }}
+                  className="mt-2 w-full py-2 bg-gray-200 dark:bg-gray-600 text-gray-800 dark:text-gray-200 text-sm rounded-lg font-medium hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors"
+                >
+                  Reset stats
+                </button>
+                <button
+                  onClick={async () => {
+                    setReset7DayMessage(null);
+                    try {
+                      const res = await fetch('/api/dev/reset-7-day-test', {
+                        method: 'POST',
+                      });
+                      const data = await res.json();
+                      setReset7DayMessage(data.message ?? data.status ?? 'Done');
+                    } catch {
+                      setReset7DayMessage('Request failed');
+                    }
+                  }}
+                  className="mt-2 w-full py-2 bg-amber-200 dark:bg-amber-700 text-amber-900 dark:text-amber-100 text-sm rounded-lg font-medium hover:bg-amber-300 dark:hover:bg-amber-600 transition-colors"
+                >
+                  Reset 7-day test counter
+                </button>
+                {(resetDayMessage || reset7DayMessage || resetStatsMessage) && (
+                  <p className="mt-2 text-xs text-gray-600 dark:text-gray-400 text-center">
+                    {resetDayMessage ?? reset7DayMessage ?? resetStatsMessage}
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Emoji — нормальные размеры */}
+          <div className="bg-white dark:bg-gray-800 rounded-2xl sm:rounded-3xl shadow-lg p-3 sm:p-4 w-full max-w-md mb-2.5 sm:mb-3">
+            <div className="grid grid-cols-6 gap-1.5 sm:gap-2 place-items-center">
+              {visibleEmojis.map(({ emoji, visible }, index) => (
+                <div key={index} className="relative flex items-center justify-center">
+                  <img
+                    src={getTwemojiUrl(emoji)}
+                    alt=""
+                    className={`w-8 h-8 sm:w-10 sm:h-10 object-contain transition-all duration-300 ${
+                      visible ? 'opacity-100 scale-100' : 'opacity-20 grayscale scale-90'
+                    }`}
+                    draggable={false}
+                    onError={(e) => {
+                      e.currentTarget.style.display = 'none';
+                      const next = e.currentTarget.nextElementSibling;
+                      if (next) next.classList.remove('hidden');
+                    }}
+                  />
+                  <span className="hidden text-3xl sm:text-4xl" aria-hidden>
+                    {emoji}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Tries */}
+          <div className="grid grid-cols-6 gap-1 sm:gap-1.5 w-full max-w-md mb-2.5 sm:mb-3 px-2 sm:px-3 place-items-center">
+            {Array.from({ length: 6 }).map((_, index) => (
+              <div
+                key={index}
+                className={`w-5 h-5 sm:w-6 sm:h-6 rounded-full transition-colors ${
+                  index < triesLeft ? 'bg-green-500' : 'bg-red-500'
+                }`}
               />
-              <p className="text-center text-sm">Guess the movie from emojis!</p>
-              <p>Hey {context?.username ?? 'there'} 👋</p>
-              <Button
-                primary
-                size="lg"
+            ))}
+          </div>
+
+          {/* Game Over Message */}
+          {gameOver && (
+            <div
+              className={`text-center p-3 sm:p-4 rounded-xl max-w-md mx-auto w-full mb-2.5 sm:mb-3 animate-fade-in-up ${
+                won ? 'bg-green-100 dark:bg-green-900/30' : 'bg-red-100 dark:bg-red-900/30'
+              }`}
+            >
+              <div className="text-xl sm:text-2xl font-bold mb-1 sm:mb-2 dark:text-white flex items-center justify-center gap-2">
+                {won ? (
+                  <>
+                    <img
+                      src={getTwemojiUrl('🎬')}
+                      alt=""
+                      className="w-6 h-6 sm:w-7 sm:h-7 object-contain flex-shrink-0"
+                      draggable={false}
+                    />
+                    You got it!
+                  </>
+                ) : (
+                  <>
+                    <img
+                      src={getTwemojiUrl('💀')}
+                      alt=""
+                      className="w-6 h-6 sm:w-7 sm:h-7 object-contain flex-shrink-0"
+                      draggable={false}
+                    />
+                    Game Over
+                  </>
+                )}
+              </div>
+              <div className="text-base sm:text-lg">
+                <span className="font-semibold dark:text-white">{movieTitle || '...'}</span>
+                <span className="text-gray-500 dark:text-gray-400"> ({movieYear || '...'})</span>
+              </div>
+              <button
                 onClick={() => {
                   playClick();
-                  if (dayNumber > 0) {
-                    localStorage.setItem(getStartedKey(dayNumber), '1');
-                  }
-                  setLoadingProgress(0);
-                  setShowLoadingAfterPlay(true);
-                  setStarted(true);
+                  handleShare();
                 }}
+                className="mt-2 sm:mt-3 px-4 sm:px-6 py-2 bg-green-500 text-white text-sm sm:text-base rounded-lg font-medium hover:bg-green-600 transition-colors inline-flex items-center justify-center gap-2"
               >
-                ▶ Play
-              </Button>
-              <p
-                className={`text-xs select-none ${isDevSubreddit ? 'cursor-pointer' : ''}`}
-                {...(isDevSubreddit ? { onClick: () => setShowDevMenu(true) } : {})}
-              >
-                Day {dayNumber}
-                {isDevSubreddit && testDay ? ' (test)' : ''} • New puzzle daily
-              </p>
-            </WindowContent>
-          </Window>
-        </div>
-        <footer
-          className="shrink-0 mt-3 mb-2 sm:mt-4 sm:mb-3 text-center w-full text-[9px] sm:text-[10px]"
-          style={{ color: 'rgba(255,255,255,0.85)' }}
-        >
+                {copied ? (
+                  <>
+                    <img
+                      src={getTwemojiUrl('✅')}
+                      alt=""
+                      className="w-5 h-5 object-contain"
+                      draggable={false}
+                    />
+                    Copied!
+                  </>
+                ) : (
+                  <>
+                    <img
+                      src={getTwemojiUrl('📋')}
+                      alt=""
+                      className="w-5 h-5 object-contain"
+                      draggable={false}
+                    />
+                    Share Result
+                  </>
+                )}
+              </button>
+            </div>
+          )}
+
+          {/* Search */}
+          {!gameOver && (
+            <input
+              type="text"
+              placeholder="Search words..."
+              value={filter}
+              onChange={(e) => {
+                handleTypeSound();
+                setFilter(e.target.value);
+              }}
+              className="w-full max-w-md px-4 py-2 sm:py-2.5 text-sm sm:text-base rounded-2xl bg-gray-200 dark:bg-gray-700 dark:text-white dark:placeholder-gray-400 border-none outline-none focus:ring-2 focus:ring-green-500 mb-2.5 sm:mb-2"
+              style={{ minHeight: '42px' }}
+            />
+          )}
+
+          {/* Word cloud — естественная высота, без flex-1 */}
+          {!gameOver && (
+            <div className="flex flex-wrap gap-1.5 sm:gap-2 justify-center items-center w-full max-w-sm sm:max-w-lg px-1">
+              {wordCloud.map((word) => (
+                <button
+                  key={word}
+                  onClick={() => {
+                    playClick();
+                    makeGuess(word);
+                  }}
+                  disabled={loading || !wordsInteractive || selectedWords.includes(word.toLowerCase())}
+                  className={`px-2.5 py-1.5 sm:px-3 sm:py-1.5 text-xs sm:text-sm rounded-full whitespace-nowrap font-medium transition-all border border-gray-300 dark:border-gray-500/70 ${getWordClass(
+                    word
+                  )} ${loading || !wordsInteractive ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                >
+                  {word}
+                </button>
+              ))}
+            </div>
+          )}
+        </main>
+
+        {/* Footer — mt-auto прижимает к низу */}
+        <footer className="shrink-0 pt-4 text-center text-xs sm:text-sm text-gray-400 dark:text-gray-500 opacity-70">
           Guess the movie from emojis • New puzzle daily
         </footer>
       </div>
     );
   }
 
-  if (isLoadingScreen) {
-    return (
+  // Retro UI (Win95) — react95 ThemeProvider only here so Simple UI is not affected by its styles
+  return (
+    <ThemeProvider theme={original}>
+      <RetroGlobalStyles />
       <div
-        className="h-screen h-[100dvh] flex flex-col items-center justify-center overflow-hidden px-4"
+        className="h-screen h-[100dvh] flex flex-col items-center overflow-hidden"
         style={{ background: '#008080' }}
       >
-        <Panel variant="well" className="w-full max-w-xs px-6 py-4 flex flex-col gap-3">
-          <span>Loading...</span>
-          <ProgressBar value={loadingProgress} className="w-full" />
-        </Panel>
-      </div>
-    );
-  }
-
-  return (
-    <div
-      className="h-screen h-[100dvh] flex flex-col items-center overflow-hidden"
-      style={{ background: '#008080' }}
-    >
       {/* WordArt: fixed distance from top, like footer at bottom */}
       <div className="shrink-0 pt-4 pb-2 sm:pt-6 sm:pb-3 flex justify-center w-full" aria-hidden>
         <span className="wordart-kinoticon">Kinoticon</span>
@@ -427,15 +1062,15 @@ export const App = () => {
           <WindowHeader className="flex items-center justify-between gap-2 shrink-0">
           <span
             className="truncate select-none"
-            {...(isDevSubreddit
+            {...(isModerator
               ? { onClick: () => setShowDevMenu(true), style: { cursor: 'pointer' } }
               : {})}
           >
             Kinoticon — Day {dayNumber}
-            {isDevSubreddit && testDay ? ' (test)' : ''}
+            {isModerator && testDay ? ' (test)' : ''}
           </span>
           <div className="flex gap-1 shrink-0">
-            {isDevSubreddit && (
+            {isModerator && (
               <Button
                 variant="menu"
                 size="sm"
@@ -464,6 +1099,30 @@ export const App = () => {
             >
               <img
                 src={getTwemojiUrl('↗️')}
+                alt=""
+                className="w-5 h-5 object-contain"
+                draggable={false}
+              />
+            </Button>
+            <Button
+              variant="menu"
+              size="sm"
+              onClick={() => {
+                toggleTheme();
+                playUITheme();
+              }}
+              title={
+                theme === 'light'
+                  ? 'Dark mode'
+                  : theme === 'dark'
+                    ? 'Retro mode'
+                    : 'Light mode'
+              }
+            >
+              <img
+                src={getTwemojiUrl(
+                  theme === 'light' ? '🌙' : theme === 'dark' ? '🎨' : '☀️'
+                )}
                 alt=""
                 className="w-5 h-5 object-contain"
                 draggable={false}
@@ -599,7 +1258,9 @@ export const App = () => {
                           if (!leaderboardData) {
                             setLeaderboardLoading(true);
                             try {
-                              const res = await fetch('/api/game/leaderboard');
+                              const res = await fetch('/api/game/leaderboard', {
+                          headers: { 'X-Session-Id': getSessionId() },
+                        });
                               const data = await res.json();
                               if (data.top100) setLeaderboardData(data);
                             } catch {
@@ -711,7 +1372,7 @@ export const App = () => {
             )}
 
             {/* Dev Menu Modal (only on dev subreddit) */}
-            {isDevSubreddit && showDevMenu && (
+            {isModerator && showDevMenu && (
               <div
                 className="fixed inset-0 flex items-center justify-center z-50 p-4"
                 style={{ background: 'rgba(0,0,0,0.4)' }}
@@ -795,7 +1456,11 @@ export const App = () => {
                         onClick={async () => {
                           setResetStatsMessage(null);
                           try {
-                            const res = await fetch('/api/dev/reset-stats', { method: 'POST' });
+                            const res = await fetch('/api/dev/reset-stats', {
+                          method: 'POST',
+                          headers: { 'X-Session-Id': getSessionId() },
+                        });
+                            storeSessionIdFromResponse(res);
                             const data = await res.json();
                             if (data.status === 'success') {
                               await loadStats();
@@ -844,19 +1509,21 @@ export const App = () => {
             >
               {/* Emoji row — white cell background for icon visibility; overflow-visible so tooltips aren't clipped */}
               <Panel variant="well" className="w-full p-2 sm:p-3 shrink-0 overflow-visible">
-                <div className="grid grid-cols-6 gap-1 sm:gap-2 text-xl sm:text-2xl place-items-center bg-white border border-[#808080] p-1.5 overflow-visible">
+                <div className="bg-white border border-[#808080] overflow-visible" style={{ paddingTop: 12, paddingBottom: 12 }}>
+                  <div className="grid grid-cols-6 gap-1 sm:gap-2 text-xl sm:text-2xl place-items-center px-1.5 overflow-visible">
                   {visibleEmojis.map(({ emoji }, index) => (
                     <PortalTooltip key={index} text="Film plot">
-                      <span className="inline-flex items-center justify-center w-7 h-7 sm:w-8 sm:h-8 cursor-default">
+                      <span className="inline-flex items-center justify-center w-8 h-8 min-w-8 min-h-8 sm:w-9 sm:h-9 sm:min-w-9 sm:min-h-9 cursor-default">
                         <img
                           src={getTwemojiUrl(emoji)}
                           alt=""
-                          className="w-7 h-7 sm:w-8 sm:h-8 object-contain"
+                          className="max-w-full max-h-full w-8 h-8 sm:w-9 sm:h-9 object-contain"
                           draggable={false}
                         />
                       </span>
                     </PortalTooltip>
                   ))}
+                  </div>
                 </div>
               </Panel>
 
@@ -978,7 +1645,7 @@ export const App = () => {
                         playClick();
                         makeGuess(word);
                       }}
-                      disabled={loading || selectedWords.includes(word.toLowerCase())}
+                      disabled={loading || !wordsInteractive || selectedWords.includes(word.toLowerCase())}
                       style={getWordStyle(word)}
                       className={
                         correctWords.includes(word.toLowerCase()) ||
@@ -1023,5 +1690,6 @@ export const App = () => {
         Guess the movie from emojis • New puzzle daily
       </footer>
     </div>
+    </ThemeProvider>
   );
 };

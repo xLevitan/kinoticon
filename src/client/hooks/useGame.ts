@@ -5,6 +5,7 @@ import {
   decryptMovieInfo,
 } from '../../shared/utils/wordCloud';
 import { preloadTwemoji } from '../utils/twemoji';
+import { getSessionId, storeSessionIdFromResponse } from '../utils/sessionId';
 
 // Get testDay from localStorage for testing different days
 function getStoredTestDay(): number | undefined {
@@ -12,13 +13,9 @@ function getStoredTestDay(): number | undefined {
   return stored ? parseInt(stored, 10) : undefined;
 }
 
-/** User's local date YYYY-MM-DD (Wordle-style: new puzzle at midnight in user's timezone). */
-function getLocalDateString(): string {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
+/** UTC date YYYY-MM-DD — same for all subreddit visitors (posts are global, not per-locale). */
+function getUtcDateString(): string {
+  return new Date().toISOString().slice(0, 10);
 }
 
 interface GameState {
@@ -80,12 +77,15 @@ export function useGame() {
 
   // Get testDay from localStorage (for testing different days)
   const [testDay, setTestDayState] = useState<number | undefined>(() => getStoredTestDay());
-  /** Only true on dev subreddit (e.g. kinoticon_dev); release build hides dev menu. */
-  const [isDevSubreddit, setIsDevSubreddit] = useState(false);
+  /** Only true when current user is moderator; controls dev menu visibility. */
+  const [isModerator, setIsModerator] = useState(false);
 
   const loadStats = useCallback(async () => {
     try {
-      const response = await fetch('/api/game/stats');
+      const response = await fetch('/api/game/stats', {
+        headers: { 'X-Session-Id': getSessionId() },
+      });
+      storeSessionIdFromResponse(response);
       const data = await response.json();
 
       if (data.status !== 'error') {
@@ -107,17 +107,24 @@ export function useGame() {
       setState((prev) => ({ ...prev, loading: true }));
 
       const ctxRes = await fetch('/api/context');
-      const ctx = (await ctxRes.json()) as { postId?: string; isDevSubreddit?: boolean };
+      const ctx = (await ctxRes.json()) as { postId?: string; isModerator?: boolean };
       postIdRef.current = ctx.postId ?? null;
-      const isDev = ctx.isDevSubreddit ?? false;
-      setIsDevSubreddit(isDev);
+      const isMod = ctx.isModerator ?? false;
+      setIsModerator(isMod);
 
-      const params = postIdRef.current
-        ? `postId=${encodeURIComponent(postIdRef.current)}`
-        : isDev && testDay
-          ? `testDay=${testDay}`
-          : `date=${getLocalDateString()}`;
-      const response = await fetch(`/api/game/daily?${params}`);
+      // Use stored testDay so "Apply" works: setTestDay + reload() run in same tick, state not updated yet
+      // In dev, explicit test day overrides postId so "Apply" actually changes the day
+      const effectiveTestDay = getStoredTestDay();
+      const params =
+        isMod && effectiveTestDay
+          ? `testDay=${effectiveTestDay}`
+          : postIdRef.current
+            ? `postId=${encodeURIComponent(postIdRef.current)}`
+            : `date=${getUtcDateString()}`;
+      const response = await fetch(`/api/game/daily?${params}`, {
+        headers: { 'X-Session-Id': getSessionId() },
+      });
+      storeSessionIdFromResponse(response);
       const data = await response.json();
 
       if (data.status === 'error') {
@@ -163,7 +170,7 @@ export function useGame() {
         error: error instanceof Error ? error.message : 'Failed to load game',
       }));
     }
-  }, [testDay, loadStats]);
+  }, [loadStats]);
 
   // Load game on mount
   useEffect(() => {
@@ -180,18 +187,20 @@ export function useGame() {
       won: boolean;
     }) => {
       try {
-        await fetch('/api/game/sync', {
+        const syncRes = await fetch('/api/game/sync', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'X-Session-Id': getSessionId() },
           body: JSON.stringify({
             ...newState,
             ...(postIdRef.current
               ? { postId: postIdRef.current }
-              : isDevSubreddit && testDay
-                ? { testDay }
-                : { date: getLocalDateString() }),
+              : (() => {
+              const d = getStoredTestDay();
+              return isModerator && d ? { testDay: d } : { date: getUtcDateString() };
+            })()),
           }),
         });
+        storeSessionIdFromResponse(syncRes);
 
         // Refresh stats if game ended
         if (newState.gameOver) {
@@ -201,7 +210,7 @@ export function useGame() {
         console.error('Failed to sync:', error);
       }
     },
-    [testDay, isDevSubreddit, loadStats]
+    [isModerator, loadStats]
   );
 
   const makeGuess = useCallback(
@@ -287,25 +296,28 @@ export function useGame() {
       .join('');
 
     const result = state.won ? '🎬' : '💀';
-    const tries = state.won ? `${6 - state.triesLeft + 1}/6` : 'X/6';
 
-    return `Kinoticon Day ${state.dayNumber} ${result}\n${tries}\n${circles}\n\nPlay at reddit.com/r/kinoticon`;
+    return `Kinoticon Day ${state.dayNumber} ${result}\n${circles}\n\nPlay at reddit.com/r/kinoticon`;
   }, [state.emojis, state.triesLeft, state.won, state.dayNumber]);
 
   const resetDayResult = useCallback(async (): Promise<string | null> => {
     try {
+      const effectiveTestDay = getStoredTestDay();
       const body = postIdRef.current
         ? { postId: postIdRef.current }
-        : isDevSubreddit && testDay
-          ? { testDay }
-          : { date: getLocalDateString() };
+        : isModerator && effectiveTestDay
+          ? { testDay: effectiveTestDay }
+          : { date: getUtcDateString() };
       const res = await fetch('/api/dev/reset-day-result', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Session-Id': getSessionId() },
         body: JSON.stringify(body),
       });
+      storeSessionIdFromResponse(res);
       const data = await res.json();
       if (data.status === 'success') {
+        setState((prev) => ({ ...prev, loading: true, gameOver: false, won: false }));
+        await new Promise((r) => setTimeout(r, 150));
         await loadGame();
         return data.message ?? null;
       }
@@ -314,7 +326,7 @@ export function useGame() {
       console.error('Reset day result:', e);
       return 'Request failed';
     }
-  }, [isDevSubreddit, testDay, loadGame]);
+  }, [isModerator, loadGame]);
 
   return {
     // State
@@ -343,8 +355,8 @@ export function useGame() {
     reload: loadGame,
     loadStats,
 
-    // Dev mode (only used when isDevSubreddit)
-    isDevSubreddit,
+    // Dev mode (only used when isModerator)
+    isModerator,
     testDay,
     resetDayResult,
     setTestDay: (day: number | undefined) => {

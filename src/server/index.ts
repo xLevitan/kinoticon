@@ -1,4 +1,6 @@
+import crypto from 'node:crypto';
 import express from 'express';
+import { rateLimit } from 'express-rate-limit';
 import type {
   DailyGameResponse,
   StatsResponse,
@@ -12,6 +14,7 @@ import {
   generateWordCloud,
   generateTitleHashes,
   encryptMovieInfo,
+  checkWinCondition,
 } from '../shared/utils/wordCloud';
 
 const app = express();
@@ -21,6 +24,16 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.text());
 
+// Rate limit: 100 req/15min per IP for /api/* (skip /internal/ - Devvit callbacks)
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  skip: (req) => !req.path.startsWith('/api/'),
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use(apiLimiter);
+
 const router = express.Router();
 
 // Helper to get current day key
@@ -29,9 +42,41 @@ function getDayKey(): string {
   return `${today.getUTCFullYear()}-${String(today.getUTCMonth() + 1).padStart(2, '0')}-${String(today.getUTCDate()).padStart(2, '0')}`;
 }
 
+/** YYYY-MM-DD for startDate + offsetDays. */
+function dateForDay(startDateStr: string, offsetDays: number): string {
+  const [y, m, d] = startDateStr.split('-').map(Number);
+  const date = new Date(Date.UTC(y ?? 0, (m ?? 1) - 1, d ?? 1));
+  date.setUTCDate(date.getUTCDate() + offsetDays);
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
+}
+
 // Helper to get player state key
 function getPlayerStateKey(userId: string, dayKey: string): string {
   return `player:${userId}:${dayKey}`;
+}
+
+const SESSION_KEY_PREFIX = 'session:';
+const SESSION_TTL_DAYS = 30;
+
+/** Server-issued session IDs for anonymous users. Validates against Redis; issues new if missing/invalid. */
+async function getUserId(
+  req: { headers: Record<string, string | string[] | undefined> },
+  res: { setHeader: (name: string, value: string) => void },
+  username: string | null | undefined
+): Promise<string> {
+  if (username) return username;
+  const sid = req.headers['x-session-id'];
+  const sessionId = typeof sid === 'string' ? sid.trim() : Array.isArray(sid) ? sid[0]?.trim() : undefined;
+  if (sessionId && sessionId.length >= 8 && sessionId.length <= 64) {
+    const valid = await redis.get(SESSION_KEY_PREFIX + sessionId);
+    if (valid) return `anon:${sessionId}`;
+  }
+  const newId = crypto.randomUUID();
+  await redis.set(SESSION_KEY_PREFIX + newId, '1', {
+    EX: SESSION_TTL_DAYS * 24 * 60 * 60,
+  } as Parameters<typeof redis.set>[2]);
+  res.setHeader('X-Session-Id', newId);
+  return `anon:${newId}`;
 }
 
 // Helper to get player stats key
@@ -97,6 +142,19 @@ async function removeFromLeaderboard(userId: string): Promise<void> {
 }
 
 const POST_DAY_KEY_PREFIX = 'post:day:';
+const START_DATE_KEY = 'kinoticon:start-date';
+
+/** Dev: today. Release: persisted in Redis (set once on first run). */
+async function getStartDate(isDevSubreddit: boolean): Promise<string> {
+  const today = () =>
+    `${new Date().getUTCFullYear()}-${String(new Date().getUTCMonth() + 1).padStart(2, '0')}-${String(new Date().getUTCDate()).padStart(2, '0')}`;
+  if (isDevSubreddit) return today();
+  const stored = await redis.get(START_DATE_KEY);
+  if (stored) return stored;
+  const d = today();
+  await redis.set(START_DATE_KEY, d);
+  return d;
+}
 
 /** Resolve day for this request: postId (stored when post was created) > testDay > date > UTC day. */
 async function resolveDayForRequest(opts: {
@@ -108,12 +166,15 @@ async function resolveDayForRequest(opts: {
   dayKey: string;
   movie: ReturnType<typeof getDailyMovie>['movie'];
 }> {
+  const isDevSubreddit = ((context as { subredditName?: string }).subredditName ?? '').endsWith('_dev');
+  const startDate = await getStartDate(isDevSubreddit);
+
   if (opts.postId) {
     const stored = await redis.get(POST_DAY_KEY_PREFIX + opts.postId);
     if (stored) {
       const dayNum = parseInt(stored, 10);
       if (!Number.isNaN(dayNum)) {
-        const result = getDailyMovie(dayNum);
+        const result = getDailyMovie(dayNum, startDate);
         return { dayNumber: result.dayNumber, dayKey: `post-day-${dayNum}`, movie: result.movie };
       }
     }
@@ -121,32 +182,46 @@ async function resolveDayForRequest(opts: {
   const testDay = opts.testDay;
   const dateParam = opts.date ?? undefined;
   const override: number | string | undefined = testDay ?? dateParam;
-  const { movie, dayNumber } = getDailyMovie(override);
+  const { movie, dayNumber } = getDailyMovie(override, startDate);
   const dayKey = testDay ? `test-day-${testDay}` : dateParam || getDayKey();
   return { dayNumber, dayKey, movie };
 }
 
+/** Check if current user is a moderator of the subreddit. Debug features use this (not subreddit name). */
+async function checkIsModerator(): Promise<boolean> {
+  try {
+    const subName = (context as { subredditName?: string }).subredditName;
+    if (!subName) return false;
+    const username = await reddit.getCurrentUsername();
+    if (!username) return false;
+    const subreddit = await reddit.getSubredditByName(subName);
+    const mods = await subreddit.getModerators().all();
+    return mods.some((u) => (u as { username?: string }).username === username);
+  } catch {
+    return false;
+  }
+}
+
 // Expose post context so client can send postId and we show this post’s day (not “today”)
-router.get<object, { postId?: string; isDevSubreddit: boolean }>(
+router.get<object, { postId?: string; isModerator: boolean }>(
   '/api/context',
   async (_req, res): Promise<void> => {
     const ctx = context as { postId?: string; subredditName?: string };
-    const isDevSubreddit = (ctx.subredditName ?? '').endsWith('_dev');
+    const isModerator = await checkIsModerator();
     res.json({
       ...(ctx.postId ? { postId: ctx.postId } : {}),
-      isDevSubreddit,
+      isModerator,
     });
   }
 );
 
-// Reset 7-day test counter (callable from dev menu in game; dev sub only)
+// Reset 7-day test counter (callable from dev menu in game; moderator only)
 router.post<object, { status: string; message?: string }>(
   '/api/dev/reset-7-day-test',
   async (_req, res): Promise<void> => {
     try {
-      const sub = (context as { subredditName?: string }).subredditName ?? '';
-      if (!sub.endsWith('_dev')) {
-        res.json({ status: 'skipped', message: 'Only on dev subreddit' });
+      if (!(await checkIsModerator())) {
+        res.json({ status: 'skipped', message: 'Moderators only' });
         return;
       }
       const counterKey = 'scheduler:daily-post-test:count';
@@ -165,18 +240,17 @@ router.post<object, { status: string; message?: string }>(
   }
 );
 
-// Reset developer stats (dev sub only)
+// Reset developer stats (moderator only)
 router.post<object, { status: string; message?: string }>(
   '/api/dev/reset-stats',
-  async (_req, res): Promise<void> => {
+  async (req, res): Promise<void> => {
     try {
-      const sub = (context as { subredditName?: string }).subredditName ?? '';
-      if (!sub.endsWith('_dev')) {
-        res.json({ status: 'skipped', message: 'Only on dev subreddit' });
+      if (!(await checkIsModerator())) {
+        res.json({ status: 'skipped', message: 'Moderators only' });
         return;
       }
       const username = await reddit.getCurrentUsername();
-      const userId = username ?? 'anonymous';
+      const userId = await getUserId(req, res, username);
       const statsKey = getPlayerStatsKey(userId);
       await redis.del(statsKey);
       await removeFromLeaderboard(userId);
@@ -191,28 +265,34 @@ router.post<object, { status: string; message?: string }>(
   }
 );
 
-// Reset current day result for dev account (dev sub only)
+// Reset current day result for dev account (moderator only)
 router.post<object, { status: string; message?: string }>(
   '/api/dev/reset-day-result',
   async (req, res): Promise<void> => {
     try {
-      const sub = (context as { subredditName?: string }).subredditName ?? '';
-      if (!sub.endsWith('_dev')) {
-        res.json({ status: 'skipped', message: 'Only on dev subreddit' });
+      if (!(await checkIsModerator())) {
+        res.json({ status: 'skipped', message: 'Moderators only' });
         return;
       }
       const username = await reddit.getCurrentUsername();
-      const userId = username ?? 'anonymous';
-      const body = req.body as { postId?: string; testDay?: number; date?: string };
+      const userId = await getUserId(req, res, username);
+      const body = req.body as { postId?: string; testDay?: number | string; date?: string };
       const postId = typeof body.postId === 'string' ? body.postId : null;
-      const testDay = typeof body.testDay === 'number' ? body.testDay : undefined;
+      const rawTestDay = body.testDay;
+      const testDay =
+        typeof rawTestDay === 'number' && !Number.isNaN(rawTestDay)
+          ? rawTestDay
+          : rawTestDay != null
+            ? parseInt(String(rawTestDay), 10)
+            : undefined;
+      const validTestDay = testDay !== undefined && !Number.isNaN(testDay) ? testDay : undefined;
       const dateParam =
         typeof body.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.date) ? body.date : null;
       const resolveOpts: Parameters<typeof resolveDayForRequest>[0] = {
-        postId,
+        postId: validTestDay !== undefined ? null : postId,
         date: dateParam,
       };
-      if (testDay !== undefined) resolveOpts.testDay = testDay;
+      if (validTestDay !== undefined) resolveOpts.testDay = validTestDay;
       const resolved = await resolveDayForRequest(resolveOpts);
       const playerStateKey = getPlayerStateKey(userId, resolved.dayKey);
       await redis.del(playerStateKey);
@@ -236,7 +316,7 @@ router.get<object, DailyGameResponse | { status: string; message: string }>(
   async (req, res): Promise<void> => {
     try {
       const username = await reddit.getCurrentUsername();
-      const userId = username ?? 'anonymous';
+      const userId = await getUserId(req, res, username);
 
       const postId =
         (typeof req.query.postId === 'string' && req.query.postId) ||
@@ -247,8 +327,9 @@ router.get<object, DailyGameResponse | { status: string; message: string }>(
           ? req.query.date
           : undefined;
 
+      // When client sends testDay (dev menu), use it and ignore postId so the chosen day is returned
       const resolveOpts: Parameters<typeof resolveDayForRequest>[0] = {
-        postId: postId ?? null,
+        postId: testDay !== undefined ? null : postId ?? null,
         date: dateParam ?? null,
       };
       if (testDay !== undefined) resolveOpts.testDay = testDay;
@@ -348,7 +429,7 @@ router.post<object, { status: string; movieTitle?: string; movieYear?: number }>
       };
 
       const username = await reddit.getCurrentUsername();
-      const userId = username ?? 'anonymous';
+      const userId = await getUserId(req, res, username);
 
       const postId =
         bodyPostId ||
@@ -359,7 +440,7 @@ router.post<object, { status: string; movieTitle?: string; movieYear?: number }>
       const dateParam =
         typeof bodyDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(bodyDate) ? bodyDate : undefined;
       const resolveOpts: Parameters<typeof resolveDayForRequest>[0] = {
-        postId: postId ?? null,
+        postId: testDay !== undefined ? null : postId ?? null,
         date: dateParam ?? null,
       };
       if (testDay !== undefined) resolveOpts.testDay = testDay;
@@ -367,20 +448,29 @@ router.post<object, { status: string; movieTitle?: string; movieYear?: number }>
       const { movie, dayNumber, dayKey } = resolved;
       const playerStateKey = getPlayerStateKey(userId, dayKey);
 
-      // Save state
+      // Server-side win validation: reject client claim if it doesn't match
+      const safeSelectedWords = Array.isArray(selectedWords)
+        ? (selectedWords as unknown[]).filter((w): w is string => typeof w === 'string').map((w) => w.toLowerCase())
+        : [];
+      const validatedWon =
+        gameOver && won ? checkWinCondition(safeSelectedWords, movie) : Boolean(won);
+
+      // Save state with validated won
       const state = {
-        selectedWords,
-        correctWords,
-        triesLeft,
-        gameOver,
-        won,
+        selectedWords: safeSelectedWords,
+        correctWords: Array.isArray(correctWords)
+          ? (correctWords as unknown[]).filter((w): w is string => typeof w === 'string').map((w) => w.toLowerCase())
+          : [],
+        triesLeft: typeof triesLeft === 'number' && triesLeft >= 0 && triesLeft <= 6 ? triesLeft : 6,
+        gameOver: Boolean(gameOver),
+        won: validatedWon,
       };
 
       await redis.set(playerStateKey, JSON.stringify(state));
 
-      // Update stats if game ended
-      if (gameOver) {
-        await updatePlayerStats(userId, won, dayNumber);
+      // Update stats if game ended (use validated win)
+      if (state.gameOver) {
+        await updatePlayerStats(userId, state.won, dayNumber);
       }
 
       res.json(
@@ -401,10 +491,10 @@ router.post<object, { status: string; movieTitle?: string; movieYear?: number }>
 // Get player stats
 router.get<object, StatsResponse | { status: string; message: string }>(
   '/api/game/stats',
-  async (_req, res): Promise<void> => {
+  async (req, res): Promise<void> => {
     try {
       const username = await reddit.getCurrentUsername();
-      const userId = username ?? 'anonymous';
+      const userId = await getUserId(req, res, username);
       const statsKey = getPlayerStatsKey(userId);
 
       const statsData = await redis.get(statsKey);
@@ -444,10 +534,10 @@ router.get<object, StatsResponse | { status: string; message: string }>(
 // Get leaderboard: top 100 + 8 around current user
 router.get<object, LeaderboardResponse | { status: string; message: string }>(
   '/api/game/leaderboard',
-  async (_req, res): Promise<void> => {
+  async (req, res): Promise<void> => {
     try {
       const username = await reddit.getCurrentUsername();
-      const userId = username ?? 'anonymous';
+      const userId = await getUserId(req, res, username);
       const statsKey = getPlayerStatsKey(userId);
       const statsData = await redis.get(statsKey);
       if (statsData) {
@@ -530,13 +620,34 @@ async function updatePlayerStats(userId: string, won: boolean, dayNumber: number
   await updateLeaderboardEntry(userId, stats);
 }
 
-// Create post on app install
+// Create post(s) on app install. Main sub: 5 posts (days 1–5). Dev sub: 1 post.
+const INITIAL_POSTS_MAIN = 5;
 router.post('/internal/on-app-install', async (_req, res): Promise<void> => {
   try {
-    const post = await createPost();
+    const isDev = ((context as { subredditName?: string }).subredditName ?? '').endsWith('_dev');
+    const startDate = await getStartDate(isDev);
+    const count = isDev ? 1 : INITIAL_POSTS_MAIN;
+
+    const postIds: string[] = [];
+    for (let day = 1; day <= count; day++) {
+      const post = await createPost(day, startDate);
+      const dayNum = day;
+      await redis.set(POST_DAY_KEY_PREFIX + post.id, String(dayNum), {
+        EX: 86400 * 400,
+      } as Parameters<typeof redis.set>[2]);
+      if (!isDev) {
+        const dayKey = dateForDay(startDate, day - 1);
+        await redis.set(`scheduler:daily-post:${dayKey}`, post.id, {
+          EX: 90000,
+        } as Parameters<typeof redis.set>[2]);
+      }
+      postIds.push(post.id);
+    }
+
     res.json({
       status: 'success',
-      message: `Post created in subreddit ${context.subredditName} with id ${post.id}`,
+      message: `${count} post(s) created in subreddit ${context.subredditName}`,
+      postIds,
     });
   } catch (error) {
     console.error(`Error creating post: ${error}`);
@@ -550,7 +661,9 @@ router.post('/internal/on-app-install', async (_req, res): Promise<void> => {
 // Create post from menu
 router.post('/internal/menu/post-create', async (_req, res): Promise<void> => {
   try {
-    const post = await createPost();
+    const isDev = ((context as { subredditName?: string }).subredditName ?? '').endsWith('_dev');
+    const startDate = await getStartDate(isDev);
+    const post = await createPost(undefined, startDate);
     res.json({
       navigateTo: `https://reddit.com/r/${context.subredditName}/comments/${post.id}`,
     });
@@ -581,8 +694,9 @@ router.post('/internal/scheduler/daily-post', async (_req, res): Promise<void> =
       return;
     }
 
-    const post = await createPost();
-    const { dayNumber: dayNum } = getDailyMovie();
+    const startDate = await getStartDate(false);
+    const post = await createPost(undefined, startDate);
+    const { dayNumber: dayNum } = getDailyMovie(undefined, startDate);
     await redis.set(POST_DAY_KEY_PREFIX + post.id, String(dayNum), {
       EX: 86400 * 400,
     } as Parameters<typeof redis.set>[2]); // ~1 year
@@ -628,7 +742,8 @@ router.post('/internal/scheduler/daily-post-test', async (_req, res): Promise<vo
       return;
     }
     await redis.set(counterKey, String(count), { EX: 600 } as Parameters<typeof redis.set>[2]);
-    const post = await createPost(count);
+    const startDate = await getStartDate(true);
+    const post = await createPost(count, startDate);
     await redis.set(POST_DAY_KEY_PREFIX + post.id, String(count), { EX: 600 } as Parameters<
       typeof redis.set
     >[2]);
