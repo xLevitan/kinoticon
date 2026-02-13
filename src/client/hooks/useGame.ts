@@ -13,6 +13,14 @@ function getStoredTestDay(): number | undefined {
   return stored ? parseInt(stored, 10) : undefined;
 }
 
+/** Get testDay from URL ?day=N (for local preview without playtest) */
+function getTestDayFromUrl(): number | undefined {
+  if (typeof window === 'undefined') return undefined;
+  const params = new URLSearchParams(window.location.search);
+  const day = params.get('day');
+  return day ? parseInt(day, 10) : undefined;
+}
+
 /** UTC date YYYY-MM-DD — same for all subreddit visitors (posts are global, not per-locale). */
 function getUtcDateString(): string {
   return new Date().toISOString().slice(0, 10);
@@ -112,9 +120,10 @@ export function useGame() {
       const isMod = ctx.isModerator ?? false;
       setIsModerator(isMod);
 
-      // Use stored testDay so "Apply" works: setTestDay + reload() run in same tick, state not updated yet
-      // In dev, explicit test day overrides postId so "Apply" actually changes the day
-      const effectiveTestDay = getStoredTestDay();
+      // Use testDay: URL ?day=N (preview) > localStorage (dev menu). Persist URL to localStorage for sync.
+      const urlDay = getTestDayFromUrl();
+      if (urlDay) localStorage.setItem('kinoticon-testDay', String(urlDay));
+      const effectiveTestDay = urlDay ?? getStoredTestDay();
       const params =
         isMod && effectiveTestDay
           ? `testDay=${effectiveTestDay}`
@@ -288,16 +297,16 @@ export function useGame() {
 
   // Generate share text
   const getShareText = useCallback(() => {
-    const circles = state.emojis
+    const hearts = state.emojis
       .map((_, index) => {
-        if (index < state.triesLeft) return '🟢';
-        return '🔴';
+        if (index < state.triesLeft) return '❤️';
+        return '💔';
       })
       .join('');
 
     const result = state.won ? '🎬' : '💀';
 
-    return `Kinoticon Day ${state.dayNumber} ${result}\n${circles}\n\nPlay at reddit.com/r/kinoticon`;
+    return `Kinoticon Day ${state.dayNumber} ${result}\n${hearts}\n\nPlay at reddit.com/r/kinoticon`;
   }, [state.emojis, state.triesLeft, state.won, state.dayNumber]);
 
   const resetDayResult = useCallback(async (): Promise<string | null> => {

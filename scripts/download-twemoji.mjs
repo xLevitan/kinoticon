@@ -83,7 +83,7 @@ async function downloadEmoji(icon) {
 }
 
 // Emoji used in UI (splash, buttons, game over) — only symbols that exist in Twemoji
-const UI_EMOJI = ['🎬', '👋', '🛠️', '☀️', '🌙', '↗️', '🔊', '🔇', '📊', '💀', '✅', '📋'];
+const UI_EMOJI = ['🎬', '👋', '🛠️', '☀️', '🌙', '↗️', '🔊', '🔇', '📊', '💀', '✅', '📋', '❤️', '💔'];
 
 async function main() {
   const content = fs.readFileSync(moviesPath, 'utf8');

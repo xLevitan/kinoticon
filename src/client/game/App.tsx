@@ -920,14 +920,15 @@ export const App = () => {
             </div>
           </div>
 
-          {/* Tries */}
+          {/* Tries (hearts) */}
           <div className="grid grid-cols-6 gap-1 sm:gap-1.5 w-full max-w-md mb-2.5 sm:mb-3 px-2 sm:px-3 place-items-center">
             {Array.from({ length: 6 }).map((_, index) => (
-              <div
+              <img
                 key={index}
-                className={`w-5 h-5 sm:w-6 sm:h-6 rounded-full transition-colors ${
-                  index < triesLeft ? 'bg-green-500' : 'bg-red-500'
-                }`}
+                src={getTwemojiUrl(index < triesLeft ? '❤️' : '💔')}
+                alt=""
+                className="w-5 h-5 sm:w-6 sm:h-6 object-contain"
+                draggable={false}
               />
             ))}
           </div>
@@ -1527,27 +1528,20 @@ export const App = () => {
                 </div>
               </Panel>
 
-              {/* Tries (hitpoints) — Win95-style radio; each circle under its emoji, one Tooltip per circle so layout unchanged */}
+              {/* Tries (hitpoints) — hearts: whole = remaining, broken = used */}
               <div className="grid grid-cols-6 gap-1 sm:gap-2 w-full px-0 shrink-0 place-items-center">
                 {Array.from({ length: 6 }).map((_, index) => {
                   const isLeft = index < triesLeft;
                   return (
                     <PortalTooltip
                       key={index}
-                      text="These are your Hit Points. Green = remaining tries. Red = used."
+                      text="These are your Hit Points. Red heart = remaining tries. Broken heart = used."
                     >
-                      <div
-                        className="rounded-full transition-all duration-200 w-3 h-3 sm:w-4 sm:h-4 flex items-center justify-center"
-                        style={{
-                          backgroundColor: isLeft ? '#228b22' : '#b22222',
-                          border: '2px solid',
-                          borderColor: isLeft
-                            ? '#7fff7f #004d00 #004d00 #7fff7f'
-                            : '#4a0000 #ff6b6b #ff6b6b #4a0000',
-                          boxShadow: isLeft
-                            ? '1px 1px 0 0 rgba(255,255,255,0.6)'
-                            : 'inset 2px 2px 0 0 rgba(0,0,0,0.4)',
-                        }}
+                      <img
+                        src={getTwemojiUrl(isLeft ? '❤️' : '💔')}
+                        alt=""
+                        className="w-4 h-4 sm:w-5 sm:h-5 object-contain"
+                        draggable={false}
                         aria-hidden
                       />
                     </PortalTooltip>

@@ -48,5 +48,5 @@ export function preloadTwemoji(emoji: string[]): Promise<void> {
   ]).then(() => undefined);
 }
 
-/** UI emoji used in splash/buttons — preload on app mount. */
-export const UI_EMOJI = ['🎬', '👋', '🛠️', '☀️', '🌙', '↗️', '🔊', '🔇', '📊', '💀', '✅', '📋'];
+/** UI emoji used in splash/buttons/hitpoints — preload on app mount. */
+export const UI_EMOJI = ['🎬', '👋', '🛠️', '☀️', '🌙', '↗️', '🔊', '🔇', '📊', '💀', '✅', '📋', '❤️', '💔'];
